@@ -49,12 +49,14 @@ def configure_cuda_path() -> None:
 
     existing = set(os.environ.get("PATH", "").split(os.pathsep))
     added: list[str] = []
+    add_dll_directory = getattr(os, "add_dll_directory", None)
     for dll_dir in _find_nvidia_dll_dirs():
         if dll_dir not in existing:
             os.environ["PATH"] = dll_dir + os.pathsep + os.environ.get("PATH", "")
             try:
-                os.add_dll_directory(dll_dir)
-            except (AttributeError, OSError):
+                if add_dll_directory is not None:
+                    add_dll_directory(dll_dir)
+            except OSError:
                 pass
             added.append(dll_dir)
 

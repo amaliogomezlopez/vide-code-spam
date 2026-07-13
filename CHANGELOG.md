@@ -7,6 +7,17 @@ y este proyecto intenta seguir [Versionado Semántico](https://semver.org/lang/e
 
 ## [Sin publicar]
 
+### Arreglado — 2026-07-13 11:55 — Tipado Linux en CI público
+
+- Corregidos cuatro errores de mypy en Ubuntu al resolver explícitamente APIs
+  exclusivas de Windows (`os.add_dll_directory`, `ctypes.windll` y
+  `ctypes.WinDLL`). Causa raíz: el runtime ya comprobaba la plataforma, pero los
+  stubs Linux eliminan esos atributos y mypy no estrecha tipos usando
+  `platform.system()`. Verificado con mypy estricto dirigido a `linux` y
+  `win32`, además de Python 3.11 y 3.12.
+- Desactivado `fail-fast` en la matriz backend para que un fallo futuro no
+  cancele los otros sistemas/versiones y deje un diagnóstico incompleto.
+
 ### Cambiado — 2026-07-13 11:35 — Repositorio público definitivo
 
 - Actualizados el metadata npm, homepage y enlace de Releases para apuntar a
