@@ -1,0 +1,36 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      - STT_PROVIDER=faster-whisper
+      - WHISPER_MODEL_SIZE=large-v3-turbo
+      - LLM_CLEANER_PROVIDER=ollama
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - FRONTEND_URL=http://localhost:5173
+      - TRUSTED_PROXY_MODE=true
+    volumes:
+      - whisper-cache:/root/.cache/whisper
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  whisper-cache:
+  ollama-models:

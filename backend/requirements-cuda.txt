@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# Optional Windows CUDA acceleration. Keep these out of the default CPU build:
+# they add roughly 1.9 GiB to the packaged backend.
+nvidia-cublas-cu12; platform_system=="Windows"
+nvidia-cudnn-cu12; platform_system=="Windows"
+nvidia-cuda-runtime-cu12; platform_system=="Windows"

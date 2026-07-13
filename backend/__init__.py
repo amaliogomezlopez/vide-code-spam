@@ -1,0 +1,1 @@
+"""Vibe Spam backend package."""

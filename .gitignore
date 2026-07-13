@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# Build outputs
+frontend/dist/
+frontend/dist-electron/
+frontend/release/
+frontend/backend-dist/
+frontend/backend-dist-build/
+frontend/inserter-dist/
+VibeSpam-Portable/
+VibeSpam-Portable-CUDA/
+backend/dist/
+backend/build/
+build/vibe-spam-backend/
+*.egg-info/
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+# PyInstaller generates these from script builds; release scripts are the source of truth.
+*.spec
+
+# Agent working dirs (local config/state for AI coding agents, not part of the app)
+.agents/
+.zcode/
+
+# Models & audio cache
+/models/
+cache/
+tmp/
+*.wav
+*.mp3
+*.ogg
+*.webm
+*.pcm
+recordings/
+benchmark-results/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
