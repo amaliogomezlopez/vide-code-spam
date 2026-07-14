@@ -92,8 +92,9 @@ class FasterWhisperEngine(STTEngine):
 
         required = ("cublas64_12.dll", "cudnn64_9.dll")
         try:
+            win_dll: Any = getattr(ctypes, "WinDLL")
             for library in required:
-                ctypes.WinDLL(library)
+                win_dll(library)
         except (AttributeError, OSError):
             return False
         return True

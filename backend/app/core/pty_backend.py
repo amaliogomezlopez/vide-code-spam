@@ -26,8 +26,9 @@ def split_command_args(args: str, *, windows: bool) -> list[str]:
         return []
     if not windows:
         return shlex.split(args, posix=True)
-    shell32: Any = ctypes.windll.shell32
-    kernel32: Any = ctypes.windll.kernel32
+    windll: Any = getattr(ctypes, "windll")
+    shell32: Any = windll.shell32
+    kernel32: Any = windll.kernel32
     shell32.CommandLineToArgvW.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
     shell32.CommandLineToArgvW.restype = ctypes.POINTER(ctypes.c_wchar_p)
     argc = ctypes.c_int()
