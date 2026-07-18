@@ -7,6 +7,27 @@ y este proyecto intenta seguir [Versionado Semántico](https://semver.org/lang/e
 
 ## [Sin publicar]
 
+### Añadido — 2026-07-18 — Dictado y empaquetado funcionales en macOS
+
+- El dictado global en macOS escribe la transcripción en el portapapeles y
+  envía `Command+V` a la aplicación enfocada mediante System Events, con
+  comprobación y solicitud del permiso de Accesibilidad. Captura además el
+  bundle de la app frontal y la reactiva con LaunchServices antes de pegar para
+  conservar el destino durante transcripciones lentas o diálogos de permisos;
+  espera a que macOS restaure el receptor nativo del teclado antes de `⌘V`.
+- El DMG declara el uso de Micrófono y Apple Events, y deja de intentar incluir
+  el `inserter.exe` exclusivo de Windows. La UI muestra el estado de permisos.
+- Electron usa el Python del virtualenv en desarrollo; `setup.sh` exige 3.11 o
+  3.12 y admite `VIBE_SPAM_PYTHON`. La detección de CLIs contempla rutas de
+  Homebrew, npm, Bun, pnpm y NVM cuando Finder proporciona un `PATH` mínimo.
+- El entrypoint empaquetado activa `multiprocessing.freeze_support()` para que
+  los helpers internos de Whisper no vuelvan a entrar en `argparse` ni fallen
+  con los argumentos privados de `resource_tracker` en macOS.
+- El build local usa firma ad-hoc explícita cuando no recibe credenciales
+  `CSC_LINK`/`CSC_NAME`, evitando que un certificado de desarrollo descubierto
+  por casualidad deje una firma inválida. Las releases pueden seguir usando
+  Developer ID y notarización.
+
 ### Arreglado — 2026-07-13 11:55 — Tipado Linux en CI público
 
 - Corregidos cuatro errores de mypy en Ubuntu al resolver explícitamente APIs

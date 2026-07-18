@@ -65,23 +65,30 @@
         "to": "backend"
       },
       {
-        "from": "inserter-dist",
-        "to": "inserter"
-      },
-      {
         "from": "assets",
         "to": "assets"
       }
     ],
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "category": "public.app-category.developer-tools",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Vibe Spam necesita el micrófono para convertir tu voz en texto.",
+        "NSAppleEventsUsageDescription": "Vibe Spam usa Accesibilidad para pegar el dictado en la aplicación que tengas enfocada."
+      }
     },
     "win": {
       "target": [
         "portable",
         "nsis"
       ],
-      "icon": "assets/vibe-spam.ico"
+      "icon": "assets/vibe-spam.ico",
+      "extraResources": [
+        {
+          "from": "inserter-dist",
+          "to": "inserter"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,

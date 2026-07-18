@@ -4,13 +4,15 @@ Orquestador de agentes CLI con entrada por voz. Abre tantas terminales como quie
 
 ![Pantalla principal de Vibe Spam](docs/assets/vibe-spam-overview.png)
 
-> **Windows es la plataforma estable.** Linux y macOS son experimentales hasta
-> completar pruebas de PTY, micrófono, empaquetado y lifecycle en equipos reales.
+> **Windows es la plataforma principal.** macOS ya funciona con build `.dmg`,
+> captura de micrófono y dictado global mediante portapapeles; sigue en beta
+> mientras no haya firma Developer ID y notarización. Linux continúa
+> experimental.
 
 ## Características
 
 - **Terminales bajo demanda**: abre 1, 2, 4 o las que necesites, seleccionando el CLI por terminal.
-- **Dictado global**: pulsa `Ctrl + Shift + D` con el cursor en cualquier caja de texto (Chrome, VS Code, Codex, ChatGPT, lo que sea), habla, y la transcripción se inserta **automáticamente** en esa caja. Véase [Dictado global](#dictado-global).
+- **Dictado global**: pulsa `Ctrl + Shift + D` en Windows/Linux o `⌘ + Shift + D` en macOS con el cursor en cualquier caja de texto (Chrome, VS Code, Codex, ChatGPT, lo que sea), habla, y la transcripción se inserta **automáticamente** en esa caja. Véase [Dictado global](#dictado-global).
 - **STT intercambiable**: `faster-whisper` (offline) o `OpenWhispr` vía HTTP.
 - **Limpieza inteligente**: un LLM local (Ollama) o cheap (Groq) corrige puntuación y formato antes de enviar al CLI.
 - **Aplicación de escritorio**: empaquetable con Electron para Windows/Mac/Linux.
@@ -43,7 +45,7 @@ Para usar una release ya empaquetada en Windows:
 | Plataforma | Estado | Notas |
 |---|---|---|
 | Windows | Principal | Portable e instalador NSIS. Terminales PTY con WinPTY y dictado global con `inserter.exe`. |
-| macOS | Experimental | Electron puede generar `.dmg` y el backend usa `pexpect`, pero falta firmar/notarizar y crear un helper de accesibilidad para insertar dictado en otras apps. |
+| macOS | Beta | `.dmg`, PTY con `pexpect`, micrófono y dictado global por portapapeles + `⌘V`. Requiere permisos de Micrófono y Accesibilidad; falta firma Developer ID y notarización. |
 | Linux | Experimental | Electron puede generar AppImage y el backend usa `pexpect`, pero el dictado global externo necesita un helper específico para X11/Wayland. |
 
 Para desarrollar o compilar desde el código fuente:
@@ -92,6 +94,15 @@ Linux/macOS (bash):
 cd vibe-spam
 ./scripts/setup.sh
 ```
+
+En macOS, si el `python3` del sistema es 3.9, instala Python 3.12 o pasa su ruta:
+
+```bash
+brew install python@3.12
+VIBE_SPAM_PYTHON="$(brew --prefix python@3.12)/bin/python3.12" ./scripts/setup.sh
+```
+
+Consulta la [guía de macOS](docs/MACOS.md) para permisos, desarrollo y `.dmg`.
 
 O manualmente:
 
@@ -239,10 +250,10 @@ Linux/macOS:
 ```
 
 En macOS/Linux los artefactos salen en `frontend/release/` según el target de
-`electron-builder` (`dmg` en macOS, `AppImage` en Linux). Esos builds son útiles
-para pruebas, pero todavía no tienen el mismo nivel de pulido que Windows:
-falta firma/notarización en macOS y un helper de inserción global nativo para
-macOS/Linux.
+`electron-builder` (`dmg` en macOS, `AppImage` en Linux). El build macOS incluye
+las descripciones de privacidad del micrófono y el pegado global por
+portapapeles; aún falta firmarlo y notarizarlo para distribución pública. Linux
+todavía necesita una implementación de inserción global para X11/Wayland.
 
 Los ejecutables finales listos para doble clic quedan en:
 
@@ -287,9 +298,9 @@ carga del modelo y parezca bloqueada o imprecisa.
 
 Por defecto:
 
-- `Ctrl + Shift + Espacio`: push-to-talk global (inicia/para grabación y envía a la terminal seleccionada).
-- `Ctrl + Shift + D`: dictado global — inserta la transcripción en la caja de texto enfocada de **cualquier app** (activa la opción *Global dictation* en Settings).
-- `Ctrl + Shift + V`: muestra/trae la ventana de Vibe Spam al frente.
+- `Ctrl/⌘ + Shift + Espacio`: push-to-talk global (inicia/para grabación y envía a la terminal seleccionada).
+- `Ctrl/⌘ + Shift + D`: dictado global — inserta la transcripción en la caja de texto enfocada de **cualquier app** (activa la opción *Global dictation* en Settings).
+- `Ctrl/⌘ + Shift + V`: muestra/trae la ventana de Vibe Spam al frente.
 
 Puedes cambiarlos desde **Settings → Shortcuts** (sin tocar código) o editando los defaults en `frontend/electron/main.ts`. Usa la sintaxis de aceleradores de Electron.
 
@@ -299,12 +310,19 @@ El dictado global te permite hablar y que el texto transcrito aparezca en la caj
 
 1. **Settings → Shortcuts → Global dictation** (checkbox).
 2. Pon el cursor en una caja de texto de la app que quieras (el navegador, VS Code, Codex, ChatGPT…).
-3. Pulsa `Ctrl + Shift + D`, habla, y para automáticamente tras 3 s de silencio (o vuelve a pulsar el atajo).
+3. Pulsa `Ctrl/⌘ + Shift + D`, habla, y espera la parada automática por silencio (o vuelve a pulsar el atajo).
 4. La transcripción se inserta en esa caja de texto.
 
-### Cómo funciona la "última milla" (`inserter.exe`)
+En macOS, concede **Micrófono** la primera vez que grabes y **Accesibilidad** al
+activar el dictado global. La app deja la transcripción en el portapapeles y
+envía `⌘V` al campo que conserva el foco. El estado de ambos permisos aparece
+en **Settings → Shortcuts**. Usa el atajo `⌘⇧D`: en algunas versiones de macOS,
+pulsar la burbuja flotante activa Vibe Spam y deja de preservar la aplicación
+de destino.
 
-Insertar texto en la caja de texto de otra app es la parte delicada del dictado global. Se hace con un **helper nativo compilado**, no con PowerShell + `Add-Type` en runtime (que era frágil: recompila un `.cs` en TEMP en cada ejecución). Es el mismo patrón que usan Espanso, AutoHotkey o el Voice Typing de Windows.
+### Cómo funciona la "última milla"
+
+Insertar texto en la caja de texto de otra app es la parte delicada del dictado global. En Windows se hace con un **helper nativo compilado**; en macOS Electron conserva la app enfocada, escribe la transcripción con la API nativa de portapapeles y usa System Events para enviar `⌘V` con permiso de Accesibilidad.
 
 - `frontend/inserter/Inserter.cs` — fuente C# (.NET Framework 4, compilable con `csc.exe` incluido en Windows).
 - `scripts/build-electron.ps1` lo compila **antes** de `electron-builder` y se empaqueta en `resources/inserter/inserter.exe`.

@@ -49,4 +49,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # PyInstaller re-enters this executable for multiprocessing helpers such as
+    # resource_tracker. Handle those private arguments before argparse sees
+    # them, otherwise macOS logs "unrecognized arguments: -B -S -I -c" and the
+    # helper repeatedly crashes while Whisper is running.
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     main()

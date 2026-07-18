@@ -12,6 +12,8 @@ para usuarios finales requiere completar esta lista para cada versión.
 - [ ] Smoke test del portable CPU en una instalación limpia de Windows 10/11.
 - [ ] Primer arranque descarga el modelo y los siguientes funcionan offline.
 - [ ] Dictado global probado en navegador, VS Code y una app Win32.
+- [ ] En macOS: `.dmg`, PTY, Micrófono, Accesibilidad y pegado global probados
+      en hardware `arm64`/`x64` para cada artefacto publicado.
 - [ ] Terminales Codex/Claude/Kimi verificadas con PTY y cierre sin huérfanos.
 - [ ] Artefactos sin `.env`, tokens, logs, modelos privados ni bases de datos.
 - [ ] SHA-256 publicado para cada artefacto.
@@ -29,10 +31,16 @@ para usuarios finales requiere completar esta lista para cada versión.
   cuDNN y CUDA Runtime, `device=cuda`, `compute_type=float16`, y ejecutar una
   transcripción real. Publicar claramente su tamaño y requisitos.
 
-## Plataformas experimentales
+## Plataformas secundarias
 
-- Linux y macOS no deben etiquetarse como soporte estable hasta probar sus
-  artefactos en hardware real y añadir helpers nativos para dictado global.
+- macOS no debe etiquetarse como estable hasta probar su artefacto en hardware
+  real y completar firma/notarización. El dictado global ya dispone de flujo de
+  portapapeles + `Command+V` autorizado por Accesibilidad.
+- El DMG `arm64` se probó en hardware Apple Silicon el 18 de julio de 2026 con
+  micrófono → Whisper → portapapeles → TextEdit. El build y smoke test `x64`
+  siguen pendientes antes de declarar cobertura Intel.
+- Linux no debe etiquetarse como estable hasta añadir una implementación de
+  dictado global para X11/Wayland y probar sus artefactos en hardware real.
 - Una matriz CI que compila backend/frontend no sustituye el smoke test de PTY,
   micrófono, permisos, empaquetado y lifecycle en el sistema objetivo.
 

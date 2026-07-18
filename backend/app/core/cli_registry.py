@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -60,6 +61,15 @@ class CliRegistry:
                 appdata / "npm", local / "Microsoft" / "WinGet" / "Links",
                 home / "scoop" / "shims", appdata / "Python" / "Scripts",
             ]
+        elif sys.platform == "darwin":
+            # Apps launched from Finder inherit a very small PATH. Include the
+            # standard Homebrew and user-level locations used by coding CLIs.
+            candidates += [
+                Path("/opt/homebrew/bin"), Path("/usr/local/bin"),
+                home / ".npm-global" / "bin", home / ".bun" / "bin",
+                home / "Library" / "pnpm",
+            ]
+            candidates += sorted((home / ".nvm" / "versions" / "node").glob("*/bin"))
         return os.pathsep.join([os.getenv("PATH", ""), *(str(path) for path in candidates if path.is_dir())])
 
     def _load_custom(self) -> list[dict[str, str]]:

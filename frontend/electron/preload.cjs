@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   selectExecutable: () => ipcRenderer.invoke('select-executable'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
+  getPlatformCapabilities: () => ipcRenderer.invoke('get-platform-capabilities'),
+  requestMacOSAccessibility: () => ipcRenderer.invoke('request-macos-accessibility'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
   beginShortcutCapture: () => ipcRenderer.invoke('begin-shortcut-capture'),
   endShortcutCapture: () => ipcRenderer.invoke('end-shortcut-capture'),

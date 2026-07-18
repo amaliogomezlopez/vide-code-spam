@@ -10,6 +10,14 @@ PYINSTALLER="$ROOT/backend/.venv/bin/pyinstaller"
 BACKEND_DIST="$ROOT/frontend/backend-dist"
 BACKEND_BUILD_DIST="$ROOT/frontend/backend-dist-build"
 
+# PyInstaller defaults to ~/Library/Application Support on macOS. A disposable
+# cache keeps builds reproducible in CI/sandboxes and avoids polluting user data.
+if [ -z "${PYINSTALLER_CONFIG_DIR:-}" ]; then
+    VIBE_SPAM_PYINSTALLER_CACHE="$(mktemp -d "${TMPDIR:-/tmp}/vibe-spam-pyinstaller.XXXXXX")"
+    export PYINSTALLER_CONFIG_DIR="$VIBE_SPAM_PYINSTALLER_CACHE"
+    trap 'rm -rf "$VIBE_SPAM_PYINSTALLER_CACHE"' EXIT
+fi
+
 if [ ! -x "$PYINSTALLER" ]; then
     if command -v pyinstaller &>/dev/null; then
         PYINSTALLER="$(command -v pyinstaller)"
@@ -23,21 +31,22 @@ fi
 rm -rf "$BACKEND_DIST" "$BACKEND_BUILD_DIST"
 
 cd "$ROOT"
-CUDA_ARGS=()
+VIBE_SPAM_PYINSTALLER_ARGS=(
+  --clean
+  --noconfirm
+  --onedir
+  --name vibe-spam-backend
+  --distpath frontend/backend-dist-build
+  --specpath build
+  --paths "$ROOT"
+  --collect-submodules backend.app
+  --collect-all ctranslate2
+)
 if [ "${VIBE_SPAM_CUDA_BUILD:-0}" = "1" ]; then
-  CUDA_ARGS+=(--collect-all nvidia)
+  VIBE_SPAM_PYINSTALLER_ARGS+=(--collect-all nvidia)
 fi
 "$PYINSTALLER" \
-  --clean \
-  --noconfirm \
-  --onedir \
-  --name vibe-spam-backend \
-  --distpath frontend/backend-dist-build \
-  --specpath build \
-  --paths "$ROOT" \
-  --collect-submodules backend.app \
-  --collect-all ctranslate2 \
-  "${CUDA_ARGS[@]}" \
+  "${VIBE_SPAM_PYINSTALLER_ARGS[@]}" \
   --collect-all faster_whisper \
   --hidden-import backend.app.main \
   backend/run.py
