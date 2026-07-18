@@ -8,6 +8,7 @@ import {
   Menu,
   nativeImage,
   screen,
+  systemPreferences,
   Tray,
 } from 'electron'
 import path from 'path'
@@ -93,6 +94,7 @@ let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
 let globalDictationMode: 'idle' | 'listening' | 'transcribing' | 'error' = 'idle'
 let globalDictationCaptureJson: string | null = null
 let globalDictationTargetLabel: string | null = null
+let globalDictationTargetBundleId: string | null = null
 let dictationOverlayDrag: {
   cursorStart: OverlayPosition
   windowStart: OverlayPosition
@@ -190,10 +192,16 @@ function backendUrl(port = backendPort): string {
 }
 
 function appIconPath(): string {
+  const iconName =
+    process.platform === 'win32'
+      ? 'vibe-spam.ico'
+      : process.platform === 'darwin'
+        ? 'vibe-spam-32.png'
+        : 'vibe-spam-256.png'
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'assets', 'vibe-spam.ico')
+    return path.join(process.resourcesPath, 'assets', iconName)
   }
-  return path.join(__dirname, '..', 'assets', 'vibe-spam.ico')
+  return path.join(__dirname, '..', 'assets', iconName)
 }
 
 function getAppIcon() {
@@ -337,13 +345,21 @@ function waitForBackend(retries = MAX_HEALTH_RETRIES): Promise<void> {
   })
 }
 
+function developmentPythonPath(): string {
+  const projectRoot = path.join(__dirname, '..', '..')
+  const virtualenvPython =
+    process.platform === 'win32'
+      ? path.join(projectRoot, 'backend', '.venv', 'Scripts', 'python.exe')
+      : path.join(projectRoot, 'backend', '.venv', 'bin', 'python')
+  if (fs.existsSync(virtualenvPython)) return virtualenvPython
+  return process.platform === 'win32' ? 'python' : 'python3'
+}
+
 async function startBackend(): Promise<void> {
   const isDev = !app.isPackaged
   backendPort = await chooseBackendPort()
   const command = isDev
-    ? process.platform === 'win32'
-      ? 'python'
-      : 'python3'
+    ? developmentPythonPath()
     : path.join(process.resourcesPath, 'backend', BACKEND_EXE_NAME)
   const args = isDev
     ? [
@@ -810,6 +826,54 @@ function captureFocusedElementAsync(onResult: (json: string | null) => void): vo
   })
 }
 
+function captureMacOSFrontmostApplicationAsync(
+  onResult: (bundleId: string | null) => void
+): void {
+  if (process.platform !== 'darwin') {
+    onResult(null)
+    return
+  }
+  let stdout = ''
+  let settled = false
+  const finish = (bundleId: string | null) => {
+    if (settled) return
+    settled = true
+    onResult(bundleId)
+  }
+  const proc = spawn(
+    '/usr/bin/osascript',
+    [
+      '-e',
+      'tell application "System Events" to get bundle identifier of first application process whose frontmost is true',
+    ],
+    { stdio: ['ignore', 'pipe', 'ignore'] }
+  )
+  const timeout = setTimeout(() => {
+    try {
+      proc.kill()
+    } catch {}
+    sendDictationDebug('focus', 'macOS target capture timed out', 'warn')
+    finish(null)
+  }, 4000)
+  proc.stdout?.on('data', (data) => {
+    stdout += String(data)
+  })
+  proc.on('error', (err) => {
+    clearTimeout(timeout)
+    sendDictationDebug('focus', `macOS target capture failed: ${err.message}`, 'warn')
+    finish(null)
+  })
+  proc.on('close', (code) => {
+    clearTimeout(timeout)
+    const bundleId = stdout.trim()
+    if (code === 0 && /^[A-Za-z0-9.-]{1,255}$/.test(bundleId)) {
+      finish(bundleId)
+      return
+    }
+    finish(null)
+  })
+}
+
 // Insert transcribed text into the previously captured control via the native
 // helper. The helper handles focus restoration, Ctrl+V, ValuePattern and
 // SendInput fallbacks, and verifies the control's value actually changed.
@@ -897,6 +961,127 @@ function insertWithHelper(text: string): Promise<boolean> {
   })
 }
 
+// macOS keeps the previously focused application active because both the
+// shortcut and the floating overlay are non-focusable. Put the transcription
+// on the system clipboard and ask System Events to send Command+V to that app.
+// macOS gates this behind Accessibility, which we check before spawning
+// osascript so a missing permission produces an actionable failure.
+function insertWithMacOSClipboard(): Promise<boolean> {
+  if (process.platform !== 'darwin') return Promise.resolve(false)
+  if (!systemPreferences.isTrustedAccessibilityClient(false)) {
+    sendDictationDebug(
+      'paste',
+      'macOS Accessibility permission is required; enable Vibe Spam in Privacy & Security > Accessibility',
+      'error'
+    )
+    systemPreferences.isTrustedAccessibilityClient(true)
+    return Promise.resolve(false)
+  }
+
+  const overlayWasVisible =
+    currentSettings.globalDictationEnabled &&
+    dictationOverlayWindow !== null &&
+    !dictationOverlayWindow.isDestroyed() &&
+    dictationOverlayWindow.isVisible()
+  if (overlayWasVisible) {
+    dictationOverlayWindow?.hide()
+    sendDictationDebug('paste', 'overlay hidden')
+  }
+
+  return new Promise((resolve) => {
+    let settled = false
+    let stderr = ''
+    const finish = (succeeded: boolean) => {
+      if (settled) return
+      settled = true
+      if (overlayWasVisible) {
+        dictationOverlayWindow?.showInactive()
+        sendDictationDebug('paste', 'overlay restored')
+      }
+      resolve(succeeded)
+    }
+
+    const sendPaste = () => {
+      const proc = spawn(
+        '/usr/bin/osascript',
+        [
+          '-e',
+          'tell application "System Events" to keystroke "v" using {command down}',
+        ],
+        { stdio: ['ignore', 'ignore', 'pipe'] }
+      )
+      const timeout = setTimeout(() => {
+        try {
+          proc.kill()
+        } catch {}
+        sendDictationDebug('paste', 'macOS paste timed out', 'error')
+        finish(false)
+      }, 30000)
+      sendDictationDebug('paste', 'macOS Command+V attempt')
+      proc.stderr?.on('data', (data) => {
+        stderr += String(data)
+      })
+      proc.on('error', (err) => {
+        clearTimeout(timeout)
+        sendDictationDebug('paste', `osascript failed: ${err.message}`, 'error')
+        finish(false)
+      })
+      proc.on('close', (code) => {
+        clearTimeout(timeout)
+        if (code === 0) {
+          sendDictationDebug('paste', 'macOS paste keystroke sent')
+          finish(true)
+          return
+        }
+        sendDictationDebug(
+          'paste',
+          (stderr.trim() || `osascript exited ${code}`).slice(0, 300),
+          'error'
+        )
+        finish(false)
+      })
+    }
+
+    const targetBundleId = globalDictationTargetBundleId
+    if (!targetBundleId) {
+      setTimeout(sendPaste, 100)
+      return
+    }
+
+    // LaunchServices brings the previously captured app back without requiring
+    // a separate Apple Events authorization for every possible target app.
+    const activate = spawn('/usr/bin/open', ['-b', targetBundleId], {
+      stdio: 'ignore',
+    })
+    let activationSettled = false
+    const continueAfterActivation = () => {
+      if (activationSettled) return
+      activationSettled = true
+      // LaunchServices can report completion before the target window has
+      // restored its native first responder. A short grace period avoids
+      // dropping Command+V while macOS is still switching applications.
+      setTimeout(sendPaste, 1000)
+    }
+    const activationTimeout = setTimeout(() => {
+      try {
+        activate.kill()
+      } catch {}
+      sendDictationDebug('focus', `activation timed out: ${targetBundleId}`, 'warn')
+      continueAfterActivation()
+    }, 3000)
+    activate.on('error', (err) => {
+      clearTimeout(activationTimeout)
+      sendDictationDebug('focus', `activation failed: ${err.message}`, 'warn')
+      continueAfterActivation()
+    })
+    activate.on('close', () => {
+      clearTimeout(activationTimeout)
+      sendDictationDebug('focus', `reactivated ${targetBundleId}`)
+      continueAfterActivation()
+    })
+  })
+}
+
 function sendGlobalDictationCommand(command: 'start' | 'stop') {
   if (!currentSettings.globalDictationEnabled || !mainWindow || mainWindow.isDestroyed()) return
   sendDictationDebug('electron', `send ${command}`)
@@ -921,6 +1106,21 @@ function requestGlobalDictationToggle() {
   // main thread.
   globalDictationMode = 'listening'
   updateDictationOverlay({ mode: 'listening', level: 0.18 })
+  if (process.platform === 'darwin') {
+    globalDictationCaptureJson = null
+    captureMacOSFrontmostApplicationAsync((bundleId) => {
+      globalDictationTargetBundleId = bundleId
+      globalDictationTargetLabel = bundleId ?? 'focused macOS app'
+      sendDictationDebug(
+        'focus',
+        bundleId ? `captured ${bundleId}` : 'using the current focused macOS field',
+        bundleId ? 'info' : 'warn'
+      )
+      if (globalDictationMode === 'listening') sendGlobalDictationCommand('start')
+    })
+    return
+  }
+  globalDictationTargetBundleId = null
   captureFocusedElementAsync((json) => {
     globalDictationCaptureJson = json
     sendDictationDebug(
@@ -970,6 +1170,9 @@ function createMainWindow() {
       callback(webContents === mainWindow?.webContents && permission === 'media')
     }
   )
+  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
+    return webContents === mainWindow?.webContents && permission === 'media'
+  })
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const allowed = app.isPackaged
       ? url.startsWith('file://')
@@ -1127,11 +1330,49 @@ if (gotTheLock) {
     return currentSettings
   })
 
+  ipcMain.handle('get-platform-capabilities', (event) => {
+    requireSender(event, mainWindow)
+    return {
+      platform: process.platform,
+      globalPasteSupported: process.platform === 'win32' || process.platform === 'darwin',
+      microphonePermission:
+        process.platform === 'darwin'
+          ? systemPreferences.getMediaAccessStatus('microphone')
+          : 'not-applicable',
+      accessibilityPermission:
+        process.platform === 'darwin'
+          ? systemPreferences.isTrustedAccessibilityClient(false)
+            ? 'granted'
+            : 'denied'
+          : 'not-applicable',
+    }
+  })
+
+  ipcMain.handle('request-macos-accessibility', (event) => {
+    requireSender(event, mainWindow)
+    if (process.platform !== 'darwin') return true
+    return systemPreferences.isTrustedAccessibilityClient(true)
+  })
+
   ipcMain.handle('save-settings', (_event, settings: AppSettings) => {
     requireSender(_event, mainWindow)
     const previous = currentSettings
     const normalized = normalizeSettings(settings)
     saveSettings(normalized)
+    if (
+      process.platform === 'darwin' &&
+      normalized.globalDictationEnabled &&
+      !previous.globalDictationEnabled
+    ) {
+      const trusted = systemPreferences.isTrustedAccessibilityClient(true)
+      sendDictationDebug(
+        'permission',
+        trusted
+          ? 'macOS Accessibility permission granted'
+          : 'macOS Accessibility permission requested',
+        trusted ? 'info' : 'warn'
+      )
+    }
     if (
       previous.pushToTalkShortcut !== normalized.pushToTalkShortcut ||
       previous.globalDictationShortcut !== normalized.globalDictationShortcut ||
@@ -1220,6 +1461,9 @@ if (gotTheLock) {
     // text. Write it here, then let the helper handle focus + paste + verify.
     clipboard.writeText(text)
     await new Promise((resolve) => setTimeout(resolve, 80))
-    return insertWithHelper(text)
+    if (process.platform === 'win32') return insertWithHelper(text)
+    if (process.platform === 'darwin') return insertWithMacOSClipboard()
+    sendDictationDebug('paste', 'global paste is not supported on this platform', 'error')
+    return false
   })
 }

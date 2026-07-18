@@ -28,6 +28,8 @@ export interface ElectronAPI {
   selectFolder?: () => Promise<string | null>
   selectExecutable?: () => Promise<string | null>
   getSettings?: () => Promise<AppSettings>
+  getPlatformCapabilities?: () => Promise<PlatformCapabilities>
+  requestMacOSAccessibility?: () => Promise<boolean>
   saveSettings?: (settings: AppSettings) => Promise<AppSettings>
   beginShortcutCapture?: () => Promise<void>
   endShortcutCapture?: () => Promise<void>
@@ -48,6 +50,13 @@ export interface ElectronAPI {
     text?: string
   }) => Promise<void>
   insertGlobalDictationText?: (text: string) => Promise<boolean>
+}
+
+export interface PlatformCapabilities {
+  platform: string
+  globalPasteSupported: boolean
+  microphonePermission: string
+  accessibilityPermission: 'granted' | 'denied' | 'not-applicable'
 }
 
 declare global {

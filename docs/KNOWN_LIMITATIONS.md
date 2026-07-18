@@ -40,10 +40,17 @@ can change independently. Install and authenticate each CLI using its official
 documentation. A custom executable path can be added when automatic detection
 does not find it.
 
-## Experimental platforms
+## macOS beta
 
-Linux and macOS are experimental. CI compilation does not yet prove microphone,
-PTY, packaging or process lifecycle behavior on real machines. Global dictation
-into other applications currently depends on the Windows UI Automation helper
-and is not supported equivalently on X11, Wayland or macOS Accessibility.
+macOS uses the system clipboard and an Accessibility-authorized `Command+V` for
+global dictation. It cannot verify the resulting value of every third-party text
+control as precisely as the Windows UI Automation helper. Use the global
+shortcut on macOS: clicking the floating overlay can activate Vibe Spam on some
+system versions and change the captured target. The current DMG is ad-hoc
+signed, not Developer ID signed or notarized. See `docs/MACOS.md`.
 
+## Linux experimental
+
+CI compilation does not prove microphone, PTY, packaging or process lifecycle
+behavior on every distribution. Global dictation into other applications still
+needs a platform-specific implementation for X11 and Wayland.

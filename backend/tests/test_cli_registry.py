@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 import pytest
 
@@ -46,3 +47,23 @@ def test_custom_profile_cannot_shadow_builtin(tmp_path: Path) -> None:
     executable.write_bytes(b"fake")
     with pytest.raises(ValueError, match="conflicts"):
         CliRegistry(tmp_path / "profiles.json").save_custom("codex", "Fake Codex", str(executable))
+
+
+def test_macos_finder_path_includes_homebrew_and_nvm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    homebrew = Path("/opt/homebrew/bin")
+    nvm_bin = tmp_path / ".nvm" / "versions" / "node" / "v22.0.0" / "bin"
+    nvm_bin.mkdir(parents=True)
+    original_is_dir = Path.is_dir
+    monkeypatch.setattr("backend.app.core.cli_registry.sys.platform", "darwin")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(
+        Path, "is_dir", lambda path: path == homebrew or original_is_dir(path)
+    )
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    search_path = CliRegistry._search_path().split(os.pathsep)
+
+    assert str(homebrew) in search_path
+    assert str(nvm_bin) in search_path

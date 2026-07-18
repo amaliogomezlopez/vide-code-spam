@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -53,7 +54,16 @@ class CliRegistry:
     def _search_path() -> str:
         home = Path.home()
         candidates = [home / ".local" / "bin", home / ".cargo" / "bin"]
-        if os.name == "nt":
+        if sys.platform == "darwin":
+            # Apps launched from Finder inherit a very small PATH. Include the
+            # standard Homebrew and user-level locations used by coding CLIs.
+            candidates += [
+                Path("/opt/homebrew/bin"), Path("/usr/local/bin"),
+                home / ".npm-global" / "bin", home / ".bun" / "bin",
+                home / "Library" / "pnpm",
+            ]
+            candidates += sorted((home / ".nvm" / "versions" / "node").glob("*/bin"))
+        elif os.name == "nt":
             appdata = Path(os.getenv("APPDATA", home))
             local = Path(os.getenv("LOCALAPPDATA", home))
             candidates += [

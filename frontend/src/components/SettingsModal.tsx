@@ -5,7 +5,7 @@ import {
   setCleanerProvider,
   setSttProvider,
 } from '../services/api'
-import { AppSettings, DEFAULT_SETTINGS } from '../services/env'
+import { AppSettings, DEFAULT_SETTINGS, type PlatformCapabilities } from '../services/env'
 import { THEMES, useSettingsStore } from '../stores/settingsStore'
 import Icon, { type IconName } from './Icon'
 
@@ -34,6 +34,11 @@ export default function SettingsModal({ onClose }: Props) {
   const [cleaner, setCleaner] = useState('')
   const [providersLoading, setProvidersLoading] = useState(false)
   const [providerMsg, setProviderMsg] = useState<string | null>(null)
+  const [capabilities, setCapabilities] = useState<PlatformCapabilities | null>(null)
+
+  useEffect(() => {
+    void window.electronAPI?.getPlatformCapabilities?.().then(setCapabilities).catch(console.error)
+  }, [])
 
   useEffect(() => {
     if (tab !== 'providers') return
@@ -105,6 +110,12 @@ export default function SettingsModal({ onClose }: Props) {
   }
 
   const handleReset = () => setDraft({ ...DEFAULT_SETTINGS })
+
+  const requestMacOSAccessibility = async () => {
+    await window.electronAPI?.requestMacOSAccessibility?.()
+    const updated = await window.electronAPI?.getPlatformCapabilities?.()
+    if (updated) setCapabilities(updated)
+  }
 
   const handleSttChange = async (value: string) => {
     setStt(value)
@@ -199,6 +210,18 @@ export default function SettingsModal({ onClose }: Props) {
                   {recording === 'global' ? 'Press keys…' : 'Record'}
                 </button>
               </div>
+              {capabilities?.platform === 'darwin' && (
+                <div className="field-hint">
+                  macOS uses the clipboard and <code>⌘V</code>. Microphone:{' '}
+                  <strong>{capabilities.microphonePermission}</strong>. Accessibility:{' '}
+                  <strong>{capabilities.accessibilityPermission}</strong>.
+                  {capabilities.accessibilityPermission !== 'granted' && (
+                    <button type="button" onClick={requestMacOSAccessibility}>
+                      Open permission prompt
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             <div className="field">
               <label>Show window shortcut</label>
