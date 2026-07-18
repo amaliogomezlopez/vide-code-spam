@@ -65,5 +65,5 @@ def test_macos_finder_path_includes_homebrew_and_nvm(
 
     search_path = CliRegistry._search_path().split(os.pathsep)
 
-    assert "/opt/homebrew/bin" in search_path
+    assert str(homebrew) in search_path
     assert str(nvm_bin) in search_path
