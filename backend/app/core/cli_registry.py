@@ -54,14 +54,7 @@ class CliRegistry:
     def _search_path() -> str:
         home = Path.home()
         candidates = [home / ".local" / "bin", home / ".cargo" / "bin"]
-        if os.name == "nt":
-            appdata = Path(os.getenv("APPDATA", home))
-            local = Path(os.getenv("LOCALAPPDATA", home))
-            candidates += [
-                appdata / "npm", local / "Microsoft" / "WinGet" / "Links",
-                home / "scoop" / "shims", appdata / "Python" / "Scripts",
-            ]
-        elif sys.platform == "darwin":
+        if sys.platform == "darwin":
             # Apps launched from Finder inherit a very small PATH. Include the
             # standard Homebrew and user-level locations used by coding CLIs.
             candidates += [
@@ -70,6 +63,13 @@ class CliRegistry:
                 home / "Library" / "pnpm",
             ]
             candidates += sorted((home / ".nvm" / "versions" / "node").glob("*/bin"))
+        elif os.name == "nt":
+            appdata = Path(os.getenv("APPDATA", home))
+            local = Path(os.getenv("LOCALAPPDATA", home))
+            candidates += [
+                appdata / "npm", local / "Microsoft" / "WinGet" / "Links",
+                home / "scoop" / "shims", appdata / "Python" / "Scripts",
+            ]
         return os.pathsep.join([os.getenv("PATH", ""), *(str(path) for path in candidates if path.is_dir())])
 
     def _load_custom(self) -> list[dict[str, str]]:
