@@ -76,6 +76,18 @@ def _git(
 
 
 def repository_root(path: str) -> Path:
+    """Resolve a caller-supplied directory to its repository root.
+
+    Static analysis flags this as user data reaching a path expression, and it
+    is: opening a terminal in a folder the user picked is the product. There is
+    no root to contain it to — the user chooses their repositories. What
+    protects the process is the transport, not this function: the backend binds
+    loopback, requires the token Electron generates per launch, and refuses a
+    non-loopback bind without one (see `backend/app/security.py`). Anyone able
+    to reach this endpoint can already run arbitrary CLIs through
+    `/api/agents`, which is the app's entire purpose.
+    """
+
     candidate = Path(path).expanduser().resolve()
     if not candidate.is_dir():
         raise FileNotFoundError(f"Directory does not exist: {candidate}")

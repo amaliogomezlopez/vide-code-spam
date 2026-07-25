@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -13,6 +14,7 @@ from backend.app.core.session_store import get_session_store
 from backend.app.models.schemas import SessionAgent, SessionSnapshot
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=SessionSnapshot)
@@ -87,8 +89,15 @@ def restore_session() -> dict[str, Any]:
                 env=stored_env if isinstance(stored_env, dict) else None,
             )
             restored.append(agent_id)
-        except (ValueError, RuntimeError, OSError) as exc:
-            skipped.append({"id": agent_id, "reason": str(exc)[:300]})
+        except (ValueError, RuntimeError, OSError):
+            # The reason reaches the UI, so it says what the user can act on and
+            # nothing else; the underlying exception goes to the backend log
+            # instead of being echoed back over HTTP.
+            logger.warning("Could not restore terminal %s", agent_id, exc_info=True)
+            skipped.append({
+                "id": agent_id,
+                "reason": f"{command or 'The command'} could not be started. See the backend log.",
+            })
 
     return {"status": "restored", "restored": restored, "skipped": skipped}
 
