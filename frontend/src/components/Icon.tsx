@@ -27,6 +27,17 @@ export type IconName =
   | 'windowMax'
   | 'windowClose'
   | 'sparkles'
+  | 'gitBranch'
+  | 'history'
+  | 'commit'
+  | 'panelLeft'
+  | 'fileDiff'
+  | 'alertTriangle'
+  | 'bell'
+  | 'layers'
+  | 'restore'
+  | 'gitMerge'
+  | 'search'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -198,6 +209,88 @@ export default function Icon({ name, size = 16, ...rest }: IconProps) {
           <path d="m5 8 1.5 3L9 12.5 6.5 14 5 17l-1.5-3L1 12.5 3.5 11z" />
           <path d="M18 13v3M16.5 14.5h3" strokeLinecap="round" />
           <path d="m17 4 .8 2L20 6.8l-2 .8-.8 2-.8-2L14 6.8l2-.8z" />
+        </svg>
+      )
+    case 'gitBranch':
+      return (
+        <svg {...common}>
+          <circle cx="6" cy="5" r="3" />
+          <circle cx="18" cy="6" r="3" />
+          <circle cx="6" cy="19" r="3" />
+          <path d="M6 8v8M9 6h3a6 6 0 0 1 6 6v-3" />
+        </svg>
+      )
+    case 'history':
+      return (
+        <svg {...common}>
+          <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+          <path d="M3 3v5h5M12 7v5l3 2" />
+        </svg>
+      )
+    case 'commit':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M3 12h6M15 12h6" />
+        </svg>
+      )
+    case 'panelLeft':
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path d="M9 3v18" />
+        </svg>
+      )
+    case 'fileDiff':
+      return (
+        <svg {...common}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <path d="M14 2v6h6M12 11v6M9 14h6M9 18h6" />
+        </svg>
+      )
+    case 'alertTriangle':
+      return (
+        <svg {...common}>
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <path d="M12 9v4M12 17h.01" />
+        </svg>
+      )
+    case 'bell':
+      return (
+        <svg {...common}>
+          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+          <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+        </svg>
+      )
+    case 'layers':
+      return (
+        <svg {...common}>
+          <path d="m12 2 9 5-9 5-9-5z" />
+          <path d="m3 12 9 5 9-5M3 17l9 5 9-5" />
+        </svg>
+      )
+    case 'gitMerge':
+      return (
+        <svg {...common}>
+          <circle cx="6" cy="6" r="3" />
+          <circle cx="6" cy="18" r="3" />
+          <circle cx="18" cy="12" r="3" />
+          <path d="M6 9v6M9 6h1a5 5 0 0 1 5 5v1" />
+        </svg>
+      )
+    case 'search':
+      return (
+        <svg {...common}>
+          <circle cx="11" cy="11" r="7" />
+          <path d="m21 21-4.3-4.3" />
+        </svg>
+      )
+    case 'restore':
+      return (
+        <svg {...common}>
+          <path d="M3 12a9 9 0 1 0 2.6-6.4L3 8" />
+          <path d="M3 3v5h5" />
+          <path d="M12 8v4l3 2" />
         </svg>
       )
     default:

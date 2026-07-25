@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import AgentGrid from './components/AgentGrid'
+import AttentionPill from './components/AttentionPill'
 import ConnectionStatus from './components/ConnectionStatus'
 import DictationDebugPanel from './components/DictationDebugPanel'
+import GitSidebar from './components/GitSidebar'
 import Icon from './components/Icon'
 import SettingsModal from './components/SettingsModal'
 import VoiceButton from './components/VoiceButton'
@@ -34,6 +36,12 @@ function App() {
 
   return (
     <div className="app-shell">
+      <a
+        className="skip-link"
+        href={selectedAgent ? `#terminal-${selectedAgent}` : '#terminal-workspace'}
+      >
+        Skip to selected terminal
+      </a>
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">VS</div>
@@ -51,6 +59,7 @@ function App() {
           <ConnectionStatus />
         </div>
         <div className="topbar-actions">
+          <AttentionPill />
           <span className="target-pill" title={selected?.id ?? selectedAgent ?? undefined}>
             <span className="pill-dot" />
             <span className="pill-label">Target</span>
@@ -67,9 +76,12 @@ function App() {
           <VoiceButton />
         </div>
       </header>
-      <main style={{ flex: 1, overflow: 'hidden' }}>
-        <AgentGrid />
-      </main>
+      <div className="workspace-shell">
+        <GitSidebar />
+        <main id="terminal-workspace" className="terminal-workspace" tabIndex={-1}>
+          <AgentGrid />
+        </main>
+      </div>
       <DictationDebugPanel />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>

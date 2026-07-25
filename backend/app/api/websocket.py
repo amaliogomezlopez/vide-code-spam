@@ -126,6 +126,26 @@ async def audio_websocket(websocket: WebSocket) -> None:
             pass
 
 
+TERMINAL_QUEUE_SIZE = 2048
+MAX_FRAME_CHARS = 128_000
+
+
+def _offer(queue: asyncio.Queue[str | None], item: str | None) -> None:
+    """Enqueue terminal output, dropping the oldest chunk when a client stalls."""
+
+    try:
+        queue.put_nowait(item)
+    except asyncio.QueueFull:
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:  # pragma: no cover - race with the consumer
+            pass
+        try:
+            queue.put_nowait(item)
+        except asyncio.QueueFull:  # pragma: no cover - consumer will catch up
+            pass
+
+
 @router.websocket("/terminal/{agent_id}")
 async def terminal_websocket(websocket: WebSocket, agent_id: str) -> None:
     if not websocket_is_authorized(websocket):
@@ -152,30 +172,66 @@ async def terminal_websocket(websocket: WebSocket, agent_id: str) -> None:
         manager.release_terminal(agent_id)
         return
 
+    # The PTY is drained by the agent's own reader thread, so this endpoint only
+    # forwards. Attaching returns the scrollback captured so far, which is what
+    # makes a reconnecting terminal show its history instead of a blank screen.
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=TERMINAL_QUEUE_SIZE)
+
+    def on_output(data: str | None) -> None:
+        loop.call_soon_threadsafe(_offer, queue, data)
+
+    snapshot, unsubscribe = agent.attach(on_output)
+
     async def forward_output() -> None:
+        exited = False
         while True:
+            first = await queue.get()
+            chunks: list[str] = []
+            if first is None:
+                exited = True
+            else:
+                chunks.append(first)
+            # Coalesce everything already buffered into a single frame: a chatty
+            # CLI otherwise produces thousands of tiny writes per second.
+            while not exited:
+                try:
+                    item = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if item is None:
+                    exited = True
+                    break
+                chunks.append(item)
+            payload = "".join(chunks)
             try:
-                data = await asyncio.to_thread(agent.read, timeout=0.1)
-                if data:
-                    await websocket.send_text(data)
-                elif agent.refresh_status() != "running":
+                for start in range(0, len(payload), MAX_FRAME_CHARS):
+                    await websocket.send_text(payload[start : start + MAX_FRAME_CHARS])
+                if exited:
                     await websocket.send_text("\r\n[Process exited]\r\n")
                     return
             except Exception as exc:
                 logger.debug("Terminal output forwarding failed for %s: %s", agent_id, exc)
-                await asyncio.sleep(0.05)
+                return
 
-    task = asyncio.create_task(forward_output())
+    task: asyncio.Task[None] | None = None
     try:
+        # The scrollback must reach the client before any live chunk, so it is
+        # flushed before the forwarding task starts.
+        for start in range(0, len(snapshot), MAX_FRAME_CHARS):
+            await websocket.send_text(snapshot[start : start + MAX_FRAME_CHARS])
+        task = asyncio.create_task(forward_output())
         while True:
             text = await websocket.receive_text()
             agent.write(text)
     except WebSocketDisconnect:
         logger.info("Terminal WebSocket disconnected: %s", agent_id)
     finally:
+        unsubscribe()
         manager.release_terminal(agent_id)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass

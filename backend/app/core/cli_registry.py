@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from backend.app.core.user_paths import config_dir
+
 
 @dataclass(frozen=True)
 class CliDefinition:
@@ -39,9 +41,7 @@ BUILTIN_CLIS: tuple[CliDefinition, ...] = (
 
 
 def _config_dir() -> Path:
-    if os.name == "nt" and os.getenv("APPDATA"):
-        return Path(os.environ["APPDATA"]) / "vibe-spam"
-    return Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config")) / "vibe-spam"
+    return config_dir()
 
 
 class CliRegistry:

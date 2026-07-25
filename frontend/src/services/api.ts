@@ -40,6 +40,7 @@ async function fetchWithRetry(
       return res
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
+      if (init?.signal?.aborted) throw lastError
       if (i < attempts - 1) {
         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * 2 ** i))
       }
@@ -57,18 +58,168 @@ export interface Agent {
   command: string
   args: string
   cwd: string
+  cli_id?: string
   status: 'running' | 'stopped' | 'error'
+  last_output_at?: number
+  process_cwd_actual?: string
+  cwd_drifted?: boolean
   git: GitStatus
 }
 
 export interface GitStatus {
   is_git?: boolean
   root?: string
+  worktree_name?: string
+  worktree_id?: string
+  common_dir?: string
+  repository_root?: string
+  repository_name?: string
+  repository_id?: string
   branch?: string
+  head?: string
+  detached?: boolean
+  upstream?: string
   dirty?: boolean
+  changed?: number
+  staged?: number
+  unstaged?: number
+  untracked?: number
   ahead?: number
   behind?: number
   is_worktree?: boolean
+  is_main_worktree?: boolean
+  error?: string
+  stale?: boolean
+}
+
+export interface GitCommit {
+  sha: string
+  short_sha: string
+  author: string
+  authored_at: string
+  subject: string
+  refs: string[]
+}
+
+export interface GitCommitList {
+  worktree_id: string
+  path: string
+  commits: GitCommit[]
+}
+
+export interface GitChange {
+  path: string
+  code: string
+  untracked: boolean
+}
+
+export interface GitChangeList {
+  worktree_id: string
+  path: string
+  changes: GitChange[]
+}
+
+export interface WorktreeEntry {
+  id: string
+  path: string
+  name: string
+  head: string
+  branch: string
+  detached: boolean
+  locked: boolean
+  prunable: boolean
+  is_main: boolean
+  exists: boolean
+  terminals: number
+}
+
+export interface RepositoryWorktrees {
+  repository_id: string
+  repository_name: string
+  repository_root: string
+  worktrees: WorktreeEntry[]
+  error: string
+}
+
+export interface WorktreeInventory {
+  repositories: RepositoryWorktrees[]
+}
+
+export interface OverlapFile {
+  path: string
+  worktree_ids: string[]
+}
+
+export interface OverlapWorktree {
+  worktree_id: string
+  name: string
+  branch: string
+  files: number
+  agents: string[]
+}
+
+export interface RepositoryOverlap {
+  repository_id: string
+  repository_name: string
+  base: string
+  worktrees: OverlapWorktree[]
+  conflicts: OverlapFile[]
+  shared_checkouts: string[]
+  error: string
+}
+
+export interface OverlapReport {
+  repositories: RepositoryOverlap[]
+  generated_at: number
+}
+
+export interface SessionAgent {
+  id: string
+  name: string
+  command: string
+  args: string
+  cwd: string
+  cli_id: string
+}
+
+export interface SessionSnapshot {
+  agents: SessionAgent[]
+  restorable: boolean
+}
+
+export interface RuntimeSettings {
+  stt_provider: string
+  cleaner_provider: string
+  whisper_model_size: string
+  whisper_language: string
+  whisper_device: string
+  whisper_compute_type: string
+  whisper_beam_size: number
+  preload_model: boolean
+  scrollback_chars: number
+}
+
+export interface MergePreview {
+  branch: string
+  target: string
+  ahead: number
+  behind: number
+  clean: boolean
+  up_to_date: boolean
+  conflicts: string[]
+}
+
+export interface Snapshot {
+  tag: string
+  sha: string
+  created_at: string
+  label: string
+}
+
+export interface SnapshotList {
+  worktree_id: string
+  path: string
+  snapshots: Snapshot[]
 }
 
 export interface CreateAgentPayload {
@@ -83,6 +234,17 @@ export interface CreateAgentPayload {
 export async function fetchAgents(): Promise<Agent[]> {
   const res = await fetchWithRetry(await apiUrl('/agents'))
   if (!res.ok) throw new Error(`Server error ${res.status}`)
+  return res.json()
+}
+
+export async function fetchGitCommits(
+  worktreeId: string,
+  limit = 50,
+  signal?: AbortSignal
+): Promise<GitCommitList> {
+  const path = `/git/worktrees/${encodeURIComponent(worktreeId)}/commits?limit=${limit}`
+  const res = await fetchWithRetry(await apiUrl(path), { signal })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to read Git history'))
   return res.json()
 }
 
@@ -271,6 +433,7 @@ export async function launchWorkspace(payload: {
   repository?: string
   base_ref?: string
   workers: WorkspaceWorkerPayload[]
+  copy_ignored?: string[]
 }): Promise<{ status: string; agents: Array<Record<string, unknown>> }> {
   const res = await fetchWithRetry(await apiUrl('/workspaces/launch'), {
     method: 'POST',
@@ -279,6 +442,144 @@ export async function launchWorkspace(payload: {
   })
   if (!res.ok) throw new Error(await readableApiError(res, 'Failed to launch workspace'))
   return res.json()
+}
+
+export async function fetchGitChanges(
+  worktreeId: string,
+  signal?: AbortSignal
+): Promise<GitChangeList> {
+  const path = `/git/worktrees/${encodeURIComponent(worktreeId)}/changes`
+  const res = await fetchWithRetry(await apiUrl(path), { signal })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to read Git changes'))
+  return res.json()
+}
+
+export async function fetchWorktreeInventory(signal?: AbortSignal): Promise<WorktreeInventory> {
+  const res = await fetchWithRetry(await apiUrl('/git/worktrees'), { signal })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to list worktrees'))
+  return res.json()
+}
+
+export async function fetchOverlaps(
+  refresh = false,
+  signal?: AbortSignal
+): Promise<OverlapReport> {
+  const res = await fetchWithRetry(await apiUrl(`/git/overlaps?refresh=${refresh}`), { signal })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to compare worktrees'))
+  return res.json()
+}
+
+export async function fetchPreviousSession(signal?: AbortSignal): Promise<SessionSnapshot> {
+  const res = await fetchWithRetry(await apiUrl('/session'), { signal })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to read the previous session'))
+  return res.json()
+}
+
+export async function restoreSession(): Promise<{
+  restored: string[]
+  skipped: Array<{ id: string; reason: string }>
+}> {
+  const res = await fetchWithRetry(await apiUrl('/session/restore'), { method: 'POST' })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to restore the session'))
+  return res.json()
+}
+
+export async function forgetSession(): Promise<void> {
+  const res = await fetchWithRetry(await apiUrl('/session'), { method: 'DELETE' })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to forget the session'))
+}
+
+export async function fetchRuntimeSettings(signal?: AbortSignal): Promise<RuntimeSettings> {
+  const res = await fetchWithRetry(await apiUrl('/settings/runtime'), { signal })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to read voice settings'))
+  return res.json()
+}
+
+export async function saveRuntimeSettings(
+  patch: Partial<RuntimeSettings>
+): Promise<RuntimeSettings> {
+  const res = await fetchWithRetry(await apiUrl('/settings/runtime'), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to save voice settings'))
+  return res.json()
+}
+
+export async function fetchMergePreview(
+  worktreeId: string,
+  signal?: AbortSignal
+): Promise<MergePreview> {
+  const path = `/integration/preview?worktree_id=${encodeURIComponent(worktreeId)}`
+  const res = await fetchWithRetry(await apiUrl(path), { signal })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to preview the merge'))
+  return res.json()
+}
+
+export async function integrateBranch(
+  worktreeId: string,
+  mode: 'merge' | 'cherry-pick'
+): Promise<{ status: string; branch: string; target: string; output: string }> {
+  const res = await fetchWithRetry(await apiUrl('/integration/integrate'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ worktree_id: worktreeId, mode }),
+  })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to integrate the branch'))
+  return res.json()
+}
+
+export async function openPullRequest(
+  worktreeId: string,
+  title: string,
+  body: string
+): Promise<{ status: string; url: string }> {
+  const res = await fetchWithRetry(await apiUrl('/integration/pull-request'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ worktree_id: worktreeId, title, body }),
+  })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to open the pull request'))
+  return res.json()
+}
+
+export async function fetchSnapshots(
+  worktreeId: string,
+  signal?: AbortSignal
+): Promise<SnapshotList> {
+  const path = `/integration/snapshots?worktree_id=${encodeURIComponent(worktreeId)}`
+  const res = await fetchWithRetry(await apiUrl(path), { signal })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to read restore points'))
+  return res.json()
+}
+
+export async function createSnapshot(worktreeId: string, label: string): Promise<Snapshot> {
+  const res = await fetchWithRetry(await apiUrl('/integration/snapshots'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ worktree_id: worktreeId, label }),
+  })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to create the restore point'))
+  return res.json()
+}
+
+export async function restoreSnapshot(worktreeId: string, tag: string): Promise<void> {
+  const res = await fetchWithRetry(await apiUrl('/integration/snapshots/restore'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ worktree_id: worktreeId, tag }),
+  })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to restore'))
+}
+
+export async function deleteSnapshot(worktreeId: string, tag: string): Promise<void> {
+  const res = await fetchWithRetry(await apiUrl('/integration/snapshots/delete'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ worktree_id: worktreeId, tag }),
+  })
+  if (!res.ok) throw new Error(await readableApiError(res, 'Failed to delete the restore point'))
 }
 
 export async function removeWorktree(path: string, deleteBranch = false): Promise<void> {

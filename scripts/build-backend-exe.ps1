@@ -8,10 +8,16 @@ $ErrorActionPreference = "Stop"
 $ROOT = $PSScriptRoot | Split-Path -Parent
 Set-Location $ROOT
 
-$PYINST = "$ROOT\backend\.venv\Scripts\pyinstaller.exe"
+$VENV_PYTHON = "$ROOT\backend\.venv\Scripts\python.exe"
 $BACKEND_DIST = "$ROOT\frontend\backend-dist"
 $BACKEND_BUILD_DIST = "$ROOT\frontend\backend-dist-build"
-if (-not (Test-Path $PYINST)) {
+if (-not (Test-Path $VENV_PYTHON)) {
+    Write-Host "Python not found in backend venv. Create the environment first." -ForegroundColor Red
+    exit 1
+}
+
+& $VENV_PYTHON -c "import PyInstaller" 2>$null
+if ($LASTEXITCODE -ne 0) {
     Write-Host "PyInstaller not found in venv. Install it first:" -ForegroundColor Red
     Write-Host "  .\backend\.venv\Scripts\pip.exe install pyinstaller" -ForegroundColor Red
     exit 1
@@ -29,7 +35,7 @@ if ($Cuda) {
   $CUDA_ARGS = @('--collect-all', 'nvidia')
 }
 
-& $PYINST `
+& $VENV_PYTHON -m PyInstaller `
   --clean `
   --noconfirm `
   --onedir `

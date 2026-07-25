@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('global-push-to-talk', wrapper)
   },
   onGlobalDictation: (callback) => {
-    const wrapper = (_event, state) => callback(state)
+    const wrapper = (_event, state, target) => callback(state, target)
     ipcRenderer.on('global-dictation', wrapper)
     return () => ipcRenderer.removeListener('global-dictation', wrapper)
   },
@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('dictation-debug', wrapper)
     return () => ipcRenderer.removeListener('dictation-debug', wrapper)
   },
+  notifyAttention: (payload) => ipcRenderer.invoke('notify-attention', payload),
   updateDictationOverlay: (state) => ipcRenderer.invoke('update-dictation-overlay', state),
   insertGlobalDictationText: (text) => ipcRenderer.invoke('insert-global-dictation-text', text),
   requestGlobalDictationToggle: () => ipcRenderer.invoke('request-global-dictation-toggle'),

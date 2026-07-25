@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from backend.app.api.routes.settings import apply_runtime_config
 from backend.app.config import get_runtime_state
-from backend.app.core.transcriber import get_transcriber
+from backend.app.core.transcriber import get_transcriber, reset_transcriber
+from backend.app.core.user_config import get_user_config_store
 
 router = APIRouter()
 
@@ -42,7 +44,12 @@ async def set_stt_provider(provider: str) -> dict[str, str]:
         raise HTTPException(
             status_code=422, detail=f"Unsupported provider. Choose from {supported}"
         )
-    get_runtime_state().stt_provider = provider
+    # Persisted, so the choice survives a restart instead of silently reverting
+    # to whatever the .env said.
+    config, engine_changed = get_user_config_store().update({"stt_provider": provider})
+    apply_runtime_config(config)
+    if engine_changed:
+        reset_transcriber()
     return {"stt_provider": provider}
 
 
@@ -51,5 +58,6 @@ async def set_cleaner_provider(provider: str) -> dict[str, str]:
     supported = {"ollama", "groq", "none"}
     if provider not in supported:
         raise HTTPException(status_code=422, detail=f"Unsupported cleaner. Choose from {supported}")
-    get_runtime_state().cleaner_provider = provider
+    config, _ = get_user_config_store().update({"cleaner_provider": provider})
+    apply_runtime_config(config)
     return {"cleaner_provider": provider}

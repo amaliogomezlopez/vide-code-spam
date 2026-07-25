@@ -2,30 +2,42 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import pytest
 
+from backend.app.core.user_config import RuntimeConfig
 from backend.app.services.stt import faster_whisper_engine
 
 
-def test_explicit_cpu_configuration_is_not_overridden(monkeypatch) -> None:
-    settings = SimpleNamespace(
+def _config(device: str, compute_type: str = "int8", explicit: bool = False) -> RuntimeConfig:
+    return RuntimeConfig(
+        stt_provider="faster-whisper",
+        cleaner_provider="none",
         whisper_model_size="tiny",
-        whisper_device="cpu",
-        whisper_compute_type="int8",
-        whisper_beam_size=1,
         whisper_language="es",
-        model_fields_set={"whisper_device", "whisper_compute_type"},
+        whisper_device=device,
+        whisper_compute_type=compute_type,
+        whisper_beam_size=1,
+        preload_model=True,
+        scrollback_chars=200_000,
+        device_explicit=explicit,
     )
-    monkeypatch.setattr(faster_whisper_engine, "get_settings", lambda: settings)
-    monkeypatch.setattr(
-        faster_whisper_engine.FasterWhisperEngine,
-        "_detect_gpu",
-        staticmethod(lambda: True),
-    )
+
+
+def _use(monkeypatch: pytest.MonkeyPatch, config: RuntimeConfig) -> None:
+    monkeypatch.setattr(faster_whisper_engine, "get_runtime_config", lambda: config)
     monkeypatch.setattr(
         faster_whisper_engine.FasterWhisperEngine,
         "_check_vad_available",
         staticmethod(lambda: False),
+    )
+
+
+def test_explicit_cpu_configuration_is_not_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
+    _use(monkeypatch, _config("cpu", explicit=True))
+    monkeypatch.setattr(
+        faster_whisper_engine.FasterWhisperEngine,
+        "_detect_gpu",
+        staticmethod(lambda: True),
     )
 
     engine = faster_whisper_engine.FasterWhisperEngine()
@@ -34,19 +46,10 @@ def test_explicit_cpu_configuration_is_not_overridden(monkeypatch) -> None:
     assert engine._compute_type == "int8"
 
 
-def _settings(device: str, compute_type: str = "int8") -> SimpleNamespace:
-    return SimpleNamespace(
-        whisper_model_size="tiny",
-        whisper_device=device,
-        whisper_compute_type=compute_type,
-        whisper_beam_size=1,
-        whisper_language="es",
-        model_fields_set=set(),
-    )
-
-
-def test_portable_defaults_remain_on_cpu_even_when_gpu_exists(monkeypatch) -> None:
-    monkeypatch.setattr(faster_whisper_engine, "get_settings", lambda: _settings("cpu"))
+def test_portable_defaults_remain_on_cpu_even_when_gpu_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use(monkeypatch, _config("cpu"))
     monkeypatch.setattr(
         faster_whisper_engine.FasterWhisperEngine, "_detect_gpu", staticmethod(lambda: True)
     )
@@ -54,11 +57,6 @@ def test_portable_defaults_remain_on_cpu_even_when_gpu_exists(monkeypatch) -> No
         faster_whisper_engine.FasterWhisperEngine,
         "_cuda_runtime_available",
         staticmethod(lambda: True),
-    )
-    monkeypatch.setattr(
-        faster_whisper_engine.FasterWhisperEngine,
-        "_check_vad_available",
-        staticmethod(lambda: False),
     )
 
     engine = faster_whisper_engine.FasterWhisperEngine()
@@ -68,8 +66,8 @@ def test_portable_defaults_remain_on_cpu_even_when_gpu_exists(monkeypatch) -> No
     assert engine.status()["ready"] is False
 
 
-def test_auto_uses_cpu_when_cuda_runtime_is_incomplete(monkeypatch) -> None:
-    monkeypatch.setattr(faster_whisper_engine, "get_settings", lambda: _settings("auto"))
+def test_auto_uses_cpu_when_cuda_runtime_is_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
+    _use(monkeypatch, _config("auto"))
     monkeypatch.setattr(
         faster_whisper_engine.FasterWhisperEngine, "_detect_gpu", staticmethod(lambda: True)
     )
@@ -78,19 +76,16 @@ def test_auto_uses_cpu_when_cuda_runtime_is_incomplete(monkeypatch) -> None:
         "_cuda_runtime_available",
         staticmethod(lambda: False),
     )
-    monkeypatch.setattr(
-        faster_whisper_engine.FasterWhisperEngine,
-        "_check_vad_available",
-        staticmethod(lambda: False),
-    )
 
     engine = faster_whisper_engine.FasterWhisperEngine()
 
     assert (engine._device, engine._compute_type) == ("cpu", "int8")
 
 
-def test_cuda_build_marker_selects_gpu_without_env_override(monkeypatch) -> None:
-    monkeypatch.setattr(faster_whisper_engine, "get_settings", lambda: _settings("cpu"))
+def test_cuda_build_marker_selects_gpu_without_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use(monkeypatch, _config("cpu"))
     monkeypatch.setattr(
         faster_whisper_engine.FasterWhisperEngine,
         "_is_cuda_build",
@@ -104,24 +99,38 @@ def test_cuda_build_marker_selects_gpu_without_env_override(monkeypatch) -> None
         "_cuda_runtime_available",
         staticmethod(lambda: True),
     )
-    monkeypatch.setattr(
-        faster_whisper_engine.FasterWhisperEngine,
-        "_check_vad_available",
-        staticmethod(lambda: False),
-    )
 
     engine = faster_whisper_engine.FasterWhisperEngine()
 
     assert (engine._device, engine._compute_type) == ("cuda", "float16")
 
 
-def test_cuda_runtime_error_switches_session_to_cpu(monkeypatch) -> None:
-    monkeypatch.setattr(faster_whisper_engine, "get_settings", lambda: _settings("cpu"))
-    monkeypatch.setattr(
-        faster_whisper_engine.FasterWhisperEngine,
-        "_check_vad_available",
-        staticmethod(lambda: False),
+def test_user_selected_model_and_language_reach_the_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = RuntimeConfig(
+        stt_provider="faster-whisper",
+        cleaner_provider="none",
+        whisper_model_size="small",
+        whisper_language="auto",
+        whisper_device="cpu",
+        whisper_compute_type="int8",
+        whisper_beam_size=3,
+        preload_model=False,
+        scrollback_chars=200_000,
+        device_explicit=True,
     )
+    _use(monkeypatch, config)
+
+    engine = faster_whisper_engine.FasterWhisperEngine()
+
+    assert engine._model_size == "small"
+    assert engine._language is None
+    assert engine._beam_size == 3
+
+
+def test_cuda_runtime_error_switches_session_to_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
+    _use(monkeypatch, _config("cpu"))
     engine = faster_whisper_engine.FasterWhisperEngine()
     engine._device = "cuda"
     engine._compute_type = "float16"

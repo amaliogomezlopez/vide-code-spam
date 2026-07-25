@@ -8,6 +8,7 @@ export interface AppSettings {
   fontSize: number
   fontFamily: string
   debugModeEnabled: boolean
+  attentionNotifications: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -20,6 +21,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 12,
   fontFamily: 'monospace',
   debugModeEnabled: false,
+  attentionNotifications: true,
 }
 
 export interface ElectronAPI {
@@ -35,7 +37,12 @@ export interface ElectronAPI {
   endShortcutCapture?: () => Promise<void>
   onSettingsChanged?: (callback: (settings: AppSettings) => void) => () => void
   onGlobalPushToTalk?: (callback: (state: 'start' | 'stop' | 'toggle') => void) => () => void
-  onGlobalDictation?: (callback: (state: 'start' | 'stop' | 'toggle') => void) => () => void
+  onGlobalDictation?: (
+    callback: (
+      state: 'start' | 'stop' | 'toggle',
+      target: 'terminal' | 'external'
+    ) => void
+  ) => () => void
   onGlobalShowWindow?: (callback: () => void) => () => void
   onDictationDebug?: (
     callback: (event: {
@@ -50,6 +57,7 @@ export interface ElectronAPI {
     text?: string
   }) => Promise<void>
   insertGlobalDictationText?: (text: string) => Promise<boolean>
+  notifyAttention?: (payload: { title: string; body: string }) => Promise<boolean>
 }
 
 export interface PlatformCapabilities {
