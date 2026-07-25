@@ -729,17 +729,21 @@ def copy_ignored_files(source: str, destination: str, patterns: list[str]) -> li
         if not cleaned or cleaned.startswith("/") or ".." in cleaned:
             continue
         for candidate in sorted(source_root.glob(cleaned))[:20]:
-            if not candidate.is_file():
-                continue
             try:
-                if candidate.stat().st_size > 1024 * 1024:
+                # Both ends are re-resolved and proven to stay inside their root:
+                # the patterns arrive over HTTP, and a symlink inside the source
+                # checkout could otherwise redirect a read or a write anywhere.
+                resolved = candidate.resolve()
+                if not resolved.is_file() or not resolved.is_relative_to(source_root):
                     continue
-                relative = candidate.relative_to(source_root)
-                target = target_root / relative
-                if target.exists():
+                if resolved.stat().st_size > 1024 * 1024:
+                    continue
+                relative = resolved.relative_to(source_root)
+                target = (target_root / relative).resolve()
+                if not target.is_relative_to(target_root) or target.exists():
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(candidate.read_bytes())
+                target.write_bytes(resolved.read_bytes())
                 copied.append(str(relative))
             except (OSError, ValueError):
                 continue
