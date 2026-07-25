@@ -40,6 +40,11 @@ class ScriptedSession:
     def resize(self, cols: int, rows: int) -> None:
         return None
 
+    def pid(self) -> int | None:
+        """Part of the PtySession contract, read when resolving the real cwd."""
+
+        return None
+
 
 def _wait_for(predicate, timeout: float = 2.0) -> bool:
     deadline = time.monotonic() + timeout

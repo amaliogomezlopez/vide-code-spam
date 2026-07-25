@@ -240,12 +240,14 @@ class AgentProcess:
             session = self._session
         if session is None:
             return ""
-        pid = session.pid()
-        if pid is None:
-            return ""
         try:
+            # Reported on every agent listing, so a transport that cannot name
+            # its process must degrade to "unknown" rather than break the poll.
+            pid = session.pid()
+            if pid is None:
+                return ""
             return os.readlink(f"/proc/{pid}/cwd")
-        except OSError:
+        except (AttributeError, OSError):
             return ""
 
     def stop(self) -> None:

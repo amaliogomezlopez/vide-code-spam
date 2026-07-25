@@ -31,6 +31,9 @@ class FakeSession:
     def resize(self, cols: int, rows: int) -> None:
         return None
 
+    def pid(self) -> int | None:
+        return None
+
 
 def test_dead_process_status_is_refreshed(monkeypatch) -> None:
     session = FakeSession()
