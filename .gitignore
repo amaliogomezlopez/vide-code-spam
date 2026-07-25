@@ -17,6 +17,10 @@ frontend/release/
 frontend/backend-dist/
 frontend/backend-dist-build/
 frontend/inserter-dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+release-metadata/
 VibeSpam-Portable/
 VibeSpam-Portable-CUDA/
 backend/dist/

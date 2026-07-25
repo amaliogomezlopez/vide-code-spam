@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
-  fetchCurrentProviders,
   fetchProviders,
-  setCleanerProvider,
-  setSttProvider,
+  fetchRuntimeSettings,
+  saveRuntimeSettings,
+  type RuntimeSettings,
 } from '../services/api'
 import { AppSettings, DEFAULT_SETTINGS, type PlatformCapabilities } from '../services/env'
 import { THEMES, useSettingsStore } from '../stores/settingsStore'
@@ -21,6 +21,20 @@ const TAB_ICONS: Record<Tab, IconName> = {
   providers: 'cpu',
 }
 
+// Mirrors the backend allowlist in core/user_config.py.
+const MODEL_SIZES = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo']
+const DEVICES = ['cpu', 'cuda', 'auto']
+const COMPUTE_TYPES = ['int8', 'int8_float16', 'float16', 'float32', 'auto']
+const LANGUAGES = [
+  { value: 'es', label: 'Spanish' },
+  { value: 'en', label: 'English' },
+  { value: 'fr', label: 'French' },
+  { value: 'de', label: 'German' },
+  { value: 'pt', label: 'Portuguese' },
+  { value: 'it', label: 'Italian' },
+  { value: 'auto', label: 'Auto-detect' },
+]
+
 export default function SettingsModal({ onClose }: Props) {
   const { settings, persist } = useSettingsStore()
   const [tab, setTab] = useState<Tab>('shortcuts')
@@ -30,10 +44,10 @@ export default function SettingsModal({ onClose }: Props) {
 
   const [sttProviders, setSttProviders] = useState<string[]>([])
   const [cleanerProviders, setCleanerProviders] = useState<string[]>([])
-  const [stt, setStt] = useState('')
-  const [cleaner, setCleaner] = useState('')
+  const [voice, setVoice] = useState<RuntimeSettings | null>(null)
   const [providersLoading, setProvidersLoading] = useState(false)
   const [providerMsg, setProviderMsg] = useState<string | null>(null)
+  const [savingVoice, setSavingVoice] = useState(false)
   const [capabilities, setCapabilities] = useState<PlatformCapabilities | null>(null)
 
   useEffect(() => {
@@ -42,20 +56,43 @@ export default function SettingsModal({ onClose }: Props) {
 
   useEffect(() => {
     if (tab !== 'providers') return
+    const controller = new AbortController()
     setProvidersLoading(true)
     setProviderMsg(null)
-    Promise.all([fetchProviders(), fetchCurrentProviders()])
-      .then(([info, current]) => {
+    Promise.all([fetchProviders(), fetchRuntimeSettings(controller.signal)])
+      .then(([info, runtime]) => {
         setSttProviders(info.stt)
         setCleanerProviders(info.cleaner)
-        setStt(current.stt_provider)
-        setCleaner(current.cleaner_provider)
+        setVoice(runtime)
       })
-      .catch((err) =>
-        setProviderMsg(err instanceof Error ? err.message : 'Failed to load providers')
-      )
-      .finally(() => setProvidersLoading(false))
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setProviderMsg(err instanceof Error ? err.message : 'Failed to load voice settings')
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setProvidersLoading(false)
+      })
+    return () => controller.abort()
   }, [tab])
+
+  const patchVoice = (patch: Partial<RuntimeSettings>) =>
+    setVoice((current) => (current ? { ...current, ...patch } : current))
+
+  const applyVoice = async () => {
+    if (!voice) return
+    setSavingVoice(true)
+    setProviderMsg(null)
+    try {
+      const saved = await saveRuntimeSettings(voice)
+      setVoice(saved)
+      setProviderMsg('Voice settings saved. A model change applies to the next dictation.')
+    } catch (err) {
+      setProviderMsg(err instanceof Error ? err.message : 'Failed to save voice settings')
+    } finally {
+      setSavingVoice(false)
+    }
+  }
 
   const startRecording = async (which: 'ptt' | 'global' | 'show') => {
     setRecording(which)
@@ -117,25 +154,8 @@ export default function SettingsModal({ onClose }: Props) {
     if (updated) setCapabilities(updated)
   }
 
-  const handleSttChange = async (value: string) => {
-    setStt(value)
-    try {
-      await setSttProvider(value)
-      setProviderMsg(`STT provider set to ${value}`)
-    } catch (err) {
-      setProviderMsg(err instanceof Error ? err.message : 'Failed to set STT provider')
-    }
-  }
-  const handleCleanerChange = async (value: string) => {
-    setCleaner(value)
-    try {
-      await setCleanerProvider(value)
-      setProviderMsg(`Cleaner provider set to ${value}`)
-    } catch (err) {
-      setProviderMsg(err instanceof Error ? err.message : 'Failed to set cleaner provider')
-    }
-  }
-
+  // The per-field STT/cleaner setters were replaced by the persisted runtime
+  // settings form below, which saves every voice option in one request.
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
@@ -241,6 +261,22 @@ export default function SettingsModal({ onClose }: Props) {
               key combo.
             </p>
             <div className="field">
+              <label>Notifications</label>
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={draft.attentionNotifications}
+                  onChange={(e) =>
+                    setDraft({ ...draft, attentionNotifications: e.target.checked })
+                  }
+                />
+                <span>
+                  Notify when a terminal goes quiet and waits for you (only while Vibe Spam is not
+                  focused)
+                </span>
+              </label>
+            </div>
+            <div className="field">
               <label>Diagnostics</label>
               <label className="check-row">
                 <input
@@ -302,11 +338,14 @@ export default function SettingsModal({ onClose }: Props) {
                 Loading
               </p>
             )}
-            {!providersLoading && (
+            {!providersLoading && voice && (
               <>
                 <div className="field">
                   <label>STT provider</label>
-                  <select value={stt} onChange={(e) => handleSttChange(e.target.value)}>
+                  <select
+                    value={voice.stt_provider}
+                    onChange={(e) => patchVoice({ stt_provider: e.target.value })}
+                  >
                     {sttProviders.map((p) => (
                       <option key={p} value={p}>
                         {p}
@@ -316,7 +355,10 @@ export default function SettingsModal({ onClose }: Props) {
                 </div>
                 <div className="field">
                   <label>LLM cleaner provider</label>
-                  <select value={cleaner} onChange={(e) => handleCleanerChange(e.target.value)}>
+                  <select
+                    value={voice.cleaner_provider}
+                    onChange={(e) => patchVoice({ cleaner_provider: e.target.value })}
+                  >
                     {cleanerProviders.map((p) => (
                       <option key={p} value={p}>
                         {p}
@@ -324,12 +366,105 @@ export default function SettingsModal({ onClose }: Props) {
                     ))}
                   </select>
                 </div>
+                <div className="field">
+                  <label>Whisper model</label>
+                  <select
+                    value={voice.whisper_model_size}
+                    onChange={(e) => patchVoice({ whisper_model_size: e.target.value })}
+                  >
+                    {MODEL_SIZES.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Dictation language</label>
+                  <select
+                    value={voice.whisper_language}
+                    onChange={(e) => patchVoice({ whisper_language: e.target.value })}
+                  >
+                    {LANGUAGES.map((language) => (
+                      <option key={language.value} value={language.value}>
+                        {language.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Device</label>
+                  <select
+                    value={voice.whisper_device}
+                    onChange={(e) => patchVoice({ whisper_device: e.target.value })}
+                  >
+                    {DEVICES.map((device) => (
+                      <option key={device} value={device}>
+                        {device}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Compute type</label>
+                  <select
+                    value={voice.whisper_compute_type}
+                    onChange={(e) => patchVoice({ whisper_compute_type: e.target.value })}
+                  >
+                    {COMPUTE_TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Beam size — {voice.whisper_beam_size}</label>
+                  <input
+                    type="range"
+                    min={1}
+                    max={10}
+                    value={voice.whisper_beam_size}
+                    onChange={(e) => patchVoice({ whisper_beam_size: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="field">
+                  <label>Startup</label>
+                  <label className="check-row">
+                    <input
+                      type="checkbox"
+                      checked={voice.preload_model}
+                      onChange={(e) => patchVoice({ preload_model: e.target.checked })}
+                    />
+                    <span>Preload the speech model on launch (faster first dictation)</span>
+                  </label>
+                </div>
+                <div className="field">
+                  <label>
+                    Terminal scrollback — {Math.round(voice.scrollback_chars / 1000)}k characters
+                    per terminal
+                  </label>
+                  <input
+                    type="range"
+                    min={20000}
+                    max={2000000}
+                    step={20000}
+                    value={voice.scrollback_chars}
+                    onChange={(e) => patchVoice({ scrollback_chars: Number(e.target.value) })}
+                  />
+                </div>
+                <button className="btn-primary" onClick={applyVoice} disabled={savingVoice}>
+                  {savingVoice ? 'Applying…' : 'Apply settings'}
+                </button>
                 {providerMsg && <p className="field-hint">{providerMsg}</p>}
                 <p className="field-hint">
-                  Model size, device and API keys are configured via <code>.env</code> and applied
-                  on backend restart.
+                  Saved per user, so a packaged build no longer depends on a <code>.env</code> file.
+                  API keys still come from the environment.
                 </p>
               </>
+            )}
+            {!providersLoading && !voice && providerMsg && (
+              <p className="field-hint">{providerMsg}</p>
             )}
           </div>
         )}

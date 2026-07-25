@@ -7,6 +7,11 @@ import {
   type CliInfo,
   type WorkspaceWorkerPayload,
 } from '../services/api'
+import {
+  buildTerminalWorkers,
+  ensureTerminalFolderCapacity,
+  type TerminalFolderMode,
+} from '../services/terminalWorkspace'
 import Icon from './Icon'
 
 interface Props {
@@ -42,10 +47,13 @@ export default function AddAgentModal({ onClose, onCreated }: Props) {
   const [count, setCount] = useState(1)
   const [args, setArgs] = useState('')
   const [cwd, setCwd] = useState('')
+  const [folderMode, setFolderMode] = useState<TerminalFolderMode>('shared')
+  const [terminalFolders, setTerminalFolders] = useState<string[]>([''])
   const [repository, setRepository] = useState('')
   const [baseRef, setBaseRef] = useState('main')
   const [workers, setWorkers] = useState<WorkerDraft[]>([])
   const [custom, setCustom] = useState({ id: '', name: '', executable: '', args: '' })
+  const [copyIgnored, setCopyIgnored] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -74,6 +82,10 @@ export default function AddAgentModal({ onClose, onCreated }: Props) {
     return () => controller.abort()
   }, [])
 
+  useEffect(() => {
+    setTerminalFolders((current) => ensureTerminalFolderCapacity(current, count))
+  }, [count])
+
   const pickFolder = async (setter: (path: string) => void) => {
     const picked = await window.electronAPI?.selectFolder?.()
     if (picked) setter(picked)
@@ -82,13 +94,15 @@ export default function AddAgentModal({ onClose, onCreated }: Props) {
   const launchTerminal = async () => {
     if (!activeCli?.installed) throw new Error('Select an installed CLI')
     await launchWorkspace({
-      workers: Array.from({ length: count }, (_, index) => ({
-        name: `${activeCli.name}${count > 1 ? ` ${index + 1}` : ''}`,
-        role: 'terminal',
-        cli_id: activeCli.id,
-        cwd: cwd.trim(),
+      workers: buildTerminalWorkers({
+        cliId: activeCli.id,
+        cliName: activeCli.name,
+        count,
         args,
-      })),
+        folderMode,
+        sharedCwd: cwd,
+        terminalCwds: terminalFolders,
+      }),
     })
   }
 
@@ -101,7 +115,14 @@ export default function AddAgentModal({ onClose, onCreated }: Props) {
       cwd: item.cwd,
       use_worktree: item.useWorktree,
     }))
-    await launchWorkspace({ repository: repository.trim(), base_ref: baseRef.trim(), workers: payloadWorkers })
+    await launchWorkspace({
+      repository: repository.trim(),
+      base_ref: baseRef.trim(),
+      workers: payloadWorkers,
+      // A brand new worktree has no ignored files, so the agent's first command
+      // usually fails on a missing local .env.
+      copy_ignored: copyIgnored ? ['.env', '.env.local', '.env.development'] : [],
+    })
   }
 
   const submit = async () => {
@@ -152,9 +173,71 @@ export default function AddAgentModal({ onClose, onCreated }: Props) {
         {mode === 'terminal' && (
           <div className="form-stack">
             <CliPicker clis={clis} selected={selectedCli} onSelect={setSelectedCli} scanning={scanning} />
-            <FolderField label="Working folder" value={cwd} onChange={setCwd} onBrowse={() => pickFolder(setCwd)} />
-            <div className="field"><label>Arguments (optional)</label><input value={args} onChange={(e) => setArgs(e.target.value)} placeholder="--model ..." /></div>
             <div className="field"><label>Number of terminals</label><select value={count} onChange={(e) => setCount(Number(e.target.value))}>{[1, 2, 3, 4, 6, 8, 9].map((n) => <option key={n} value={n}>{n}{n === 4 ? ' (2×2)' : ''}</option>)}</select></div>
+            <div className="field">
+              <label>Project layout</label>
+              <div className="workspace-scope-grid" role="radiogroup" aria-label="Project layout">
+                <ScopeOption
+                  active={folderMode === 'shared'}
+                  icon="terminal"
+                  kicker="One checkout"
+                  title="Shared project"
+                  description="Every terminal starts in the same folder and sees the same working tree."
+                  onClick={() => setFolderMode('shared')}
+                />
+                <ScopeOption
+                  active={folderMode === 'separate'}
+                  icon="folder"
+                  kicker="Per terminal"
+                  title="Different projects"
+                  description="Choose an independent folder or local repository for every terminal."
+                  onClick={() => setFolderMode('separate')}
+                />
+              </div>
+            </div>
+            {folderMode === 'shared' ? (
+              <div className="workspace-route-panel shared-route-panel">
+                <FolderField label="Shared working folder" value={cwd} onChange={setCwd} onBrowse={() => pickFolder(setCwd)} />
+                <p>All terminals share filesystem changes. Use Parallel workspace when you need isolated Git branches.</p>
+                {count > 1 && activeCli?.kind === 'coding-agent' ? (
+                  <div className="inline-warning" role="alert">
+                    <Icon name="alertTriangle" size={14} />
+                    <span>
+                      <strong>{count} agents in one working tree.</strong> They will overwrite each
+                      other's edits with no Git conflict to warn you. Use <em>Parallel workspace</em>{' '}
+                      to give each writer its own worktree and branch.
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="workspace-route-panel">
+                <div className="terminal-route-heading">
+                  <div><strong>Terminal routes</strong><span>Each process starts in its assigned local project.</span></div>
+                  <span className="route-count">{count} {count === 1 ? 'route' : 'routes'}</span>
+                </div>
+                <div className="terminal-folder-list">
+                  {terminalFolders.slice(0, count).map((folder, index) => (
+                    <div className="terminal-folder-row" key={index}>
+                      <span className="terminal-route-number">{String(index + 1).padStart(2, '0')}</span>
+                      <div className="terminal-route-field">
+                        <label htmlFor={`terminal-folder-${index}`}>Terminal {index + 1} folder or repository</label>
+                        <div className="inline-field">
+                          <input
+                            id={`terminal-folder-${index}`}
+                            value={folder}
+                            onChange={(event) => setTerminalFolders((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))}
+                            placeholder="D:\\projects\\my-app"
+                          />
+                          <button type="button" onClick={() => pickFolder((path) => setTerminalFolders((current) => current.map((value, itemIndex) => itemIndex === index ? path : value)))}><Icon name="folder" /> Browse</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="field"><label>Arguments (optional)</label><input value={args} onChange={(e) => setArgs(e.target.value)} placeholder="--model ..." /></div>
           </div>
         )}
 
@@ -163,6 +246,13 @@ export default function AddAgentModal({ onClose, onCreated }: Props) {
             <div className="parallel-intro"><strong>Safe same-repository mode</strong><span>Workers using worktrees receive an isolated branch. The first coordinator stays in the main checkout.</span></div>
             <FolderField label="Git repository (required for worktrees)" value={repository} onChange={setRepository} onBrowse={() => pickFolder(setRepository)} />
             <div className="field"><label>Base ref</label><input value={baseRef} onChange={(e) => setBaseRef(e.target.value)} placeholder="main" /></div>
+            <div className="field">
+              <label>Worktree bootstrap</label>
+              <label className="check-row">
+                <input type="checkbox" checked={copyIgnored} onChange={(e) => setCopyIgnored(e.target.checked)} />
+                <span>Copy local <code>.env</code> files into each new worktree (small files only)</span>
+              </label>
+            </div>
             <div className="worker-list">
               {workers.map((item, index) => (
                 <div className="worker-row" key={index}>
@@ -216,11 +306,15 @@ export default function AddAgentModal({ onClose, onCreated }: Props) {
 
         <div className="modal-footer align-end">
           <button onClick={onClose} disabled={loading}>Cancel</button>
-          {mode !== 'clis' && <button className="btn-primary" onClick={submit} disabled={loading || scanning || (mode === 'parallel' && workers.some((item) => !item.cliId))}><Icon name="plus" />{loading ? 'Launching…' : mode === 'parallel' ? `Launch ${workers.length} workers` : 'Open'}</button>}
+          {mode !== 'clis' && <button className="btn-primary" onClick={submit} disabled={loading || scanning || (mode === 'parallel' && workers.some((item) => !item.cliId))}><Icon name="plus" />{loading ? 'Launching…' : mode === 'parallel' ? `Launch ${workers.length} workers` : count === 1 ? 'Open terminal' : `Open ${count} terminals`}</button>}
         </div>
       </div>
     </div>
   )
+}
+
+function ScopeOption({ active, icon, kicker, title, description, onClick }: { active: boolean; icon: 'terminal' | 'folder'; kicker: string; title: string; description: string; onClick: () => void }) {
+  return <button type="button" role="radio" aria-checked={active} className={`workspace-scope-option${active ? ' active' : ''}`} onClick={onClick}><span className="scope-icon"><Icon name={icon} /></span><span className="scope-copy"><small>{kicker}</small><strong>{title}</strong><span>{description}</span></span><span className="scope-indicator" aria-hidden="true" /></button>
 }
 
 function CliPicker({ clis, selected, onSelect, scanning }: { clis: CliInfo[]; selected: string; onSelect: (id: string) => void; scanning: boolean }) {
@@ -228,7 +322,7 @@ function CliPicker({ clis, selected, onSelect, scanning }: { clis: CliInfo[]; se
 }
 
 function FolderField({ label, value, onChange, onBrowse }: { label: string; value: string; onChange: (value: string) => void; onBrowse: () => void }) {
-  return <div className="field"><label>{label}</label><div className="inline-field"><input value={value} onChange={(e) => onChange(e.target.value)} placeholder="D:\projects\my-app" /><button onClick={onBrowse}><Icon name="folder" /> Browse</button></div></div>
+  return <div className="field"><label>{label}</label><div className="inline-field"><input value={value} onChange={(e) => onChange(e.target.value)} placeholder="D:\\projects\\my-app" /><button type="button" onClick={onBrowse}><Icon name="folder" /> Browse</button></div></div>
 }
 
 function updateWorker(setter: Dispatch<SetStateAction<WorkerDraft[]>>, index: number, patch: Partial<WorkerDraft>) {

@@ -12,11 +12,25 @@ Orquestador de agentes CLI con entrada por voz. Abre tantas terminales como quie
 ## Características
 
 - **Terminales bajo demanda**: abre 1, 2, 4 o las que necesites, seleccionando el CLI por terminal.
+- **Supervisión multiagente**: indicador de *waiting* cuando una terminal lleva
+  rato en silencio tras haber producido salida, y contador en la barra superior
+  para saltar a la que te está esperando.
+- **Radar de conflictos**: compara lo que toca cada worktree del mismo
+  repositorio y avisa de los archivos que dos agentes están cambiando a la vez,
+  antes de que el conflicto llegue al merge.
+- **Sidebar Git**: repositorios, worktrees, archivos modificados, historial,
+  conflictos e inventario completo de worktrees (incluidos los que ya no tienen
+  terminal abierta).
+- **Sesión persistente**: al arrancar puedes restaurar las terminales de la
+  sesión anterior con su CLI, carpeta y worktree.
+- **Historial de terminal a prueba de filtros**: el backend guarda el scrollback
+  de cada proceso y lo reenvía al reconectar.
 - **Dictado global**: pulsa `Ctrl + Shift + D` en Windows/Linux o `⌘ + Shift + D` en macOS con el cursor en cualquier caja de texto (Chrome, VS Code, Codex, ChatGPT, lo que sea), habla, y la transcripción se inserta **automáticamente** en esa caja. Véase [Dictado global](#dictado-global).
 - **STT intercambiable**: `faster-whisper` (offline) o `OpenWhispr` vía HTTP.
 - **Limpieza inteligente**: un LLM local (Ollama) o cheap (Groq) corrige puntuación y formato antes de enviar al CLI.
 - **Aplicación de escritorio**: empaquetable con Electron para Windows/Mac/Linux.
-- **Comparación A/B**: cambia de modelo STT o cleaner en caliente.
+- **Comparación A/B**: cambia de modelo STT o cleaner en caliente, y ahora se
+  guarda por usuario en vez de depender de `.env`.
 
 ## Estructura
 
@@ -137,6 +151,20 @@ El mismo modo existe en el backend empaquetado:
 
 ## Uso en desarrollo
 
+Un solo comando levanta backend y frontend (usa automáticamente el intérprete de
+`backend/.venv`):
+
+```bash
+cd frontend
+npm run dev:all
+```
+
+Abre http://localhost:5173. El puerto es estricto: si está ocupado Vite falla en
+vez de moverse al 5174, porque la ventana de Electron en desarrollo apunta a
+5173 y un cambio silencioso dejaba la app en blanco.
+
+Si prefieres dos terminales:
+
 ```bash
 # Terminal 1: backend (desde la raíz del repo)
 source backend/.venv/bin/activate
@@ -147,7 +175,8 @@ cd frontend
 npm run dev
 ```
 
-Abre la URL que muestre Vite (normalmente http://localhost:5173; si está ocupado usará el 5174 — mira la consola de Vite).
+Para la app de escritorio en desarrollo, deja `npm run dev` corriendo y lanza
+`npm run electron:dev` en otra terminal (Electron arranca su propio backend).
 
 Haz clic en **+ Open terminal**, elige CLI y número de terminales, selecciona una terminal y pulsa **🎤 Push to talk**.
 
@@ -183,8 +212,86 @@ estado Git. **Worktree** elimina únicamente un worktree limpio y conserva su
 rama; con cambios sin commit, la operación se rechaza para evitar pérdida de
 trabajo.
 
-No ejecutes dos agentes escritores sobre el mismo checkout. Integra sus ramas
-mediante revisión, pull request, merge o cherry-pick desde el coordinador.
+Al crear worktrees puedes activar **Worktree bootstrap** para copiar los `.env`
+locales al nuevo checkout: un worktree recién creado solo contiene archivos
+versionados, y el primer comando del agente suele fallar sin ellos.
+
+No ejecutes dos agentes escritores sobre el mismo checkout. Si lo haces, la app
+te avisa en tres sitios (el modal al abrir terminales, un banner sobre la
+rejilla y el propio sidebar) porque Git no puede arbitrar ese caso: no hay
+conflicto, simplemente gana la última escritura. Integra las ramas mediante
+revisión, pull request, merge o cherry-pick desde el coordinador.
+
+### Radar de conflictos
+
+La pestaña **Conflicts** del sidebar compara los worktrees abiertos del mismo
+repositorio. Para cada uno calcula los archivos tocados —cambios sin commitear
+más el diff contra el `merge-base` con el checkout principal— y lista los que
+aparecen en dos o más. Así ves la colisión mientras todavía es barato redirigir
+a un agente, en vez de descubrirla al integrar.
+
+La pestaña **Worktrees** lista todos los worktrees de cada repositorio abierto,
+incluidos los que ya no tienen terminal, y permite eliminar los que estén
+limpios. Antes esos worktrees quedaban invisibles y se acumulaban en disco.
+
+### Integrar el trabajo de un agente
+
+La pestaña **Integrate** cierra el ciclo sobre el checkout seleccionado:
+
+- **Merge preview**: `git merge-tree --write-tree` resuelve el merge en la base
+  de datos de objetos sin tocar ningún working tree, así que ver si saldría
+  limpio —y qué archivos chocarían— no tiene ningún riesgo ni efecto.
+- **Merge / Cherry-pick**: aplican la rama sobre el checkout principal, que debe
+  estar limpio. Si Git falla, la operación se revierte con su `--abort`, de modo
+  que nunca te deja a medias.
+- **Pull request**: empuja la rama y abre el PR con `gh`. Si la GitHub CLI no
+  está instalada, lo dice claramente en vez de fallar en silencio.
+- **Puntos de restauración**: capturan el estado del checkout con `git stash
+  create` y una etiqueta `vibe-safety/<rama>/<timestamp>`, sin modificar el
+  working tree. Crea uno antes de dejar que un agente reescriba el checkout: un
+  `git reset --hard` deja de ser irreversible.
+
+  Cubren **solo archivos versionados**, que es justo lo que destruye
+  `reset --hard`. Los archivos sin trackear no se capturan (Git no puede
+  guardar lo que no rastrea) y los creados después de la captura no se eliminan
+  al restaurar.
+
+### Puertos y directorios
+
+Cada worker de **Parallel workspace** recibe `PORT` y `VITE_PORT` propios, para
+que cuatro `npm run dev` no peleen por el 3000 (o peor: que un agente acabe
+depurando el servidor de otro). Se puede desactivar en la petición con
+`assign_ports: false`.
+
+En Linux, la tarjeta avisa si el proceso se ha movido a otro directorio (`cd`),
+porque a partir de ese momento la rama mostrada dejaría de corresponder al sitio
+donde el agente trabaja. En Windows no hay forma barata y fiable de leerlo, así
+que se conserva el directorio de arranque y no se inventa nada.
+
+Además, todas las llamadas a Git se serializan por checkout y se reintentan ante
+`index.lock`, que es el error que aparece cuando varios agentes ejecutan
+comandos Git a la vez sobre el mismo repositorio.
+
+## Pruebas
+
+```bash
+cd frontend
+npm test          # unitarios y de componentes (Vitest)
+npm run e2e       # Playwright: arranca backend + Vite y usa una terminal real
+```
+
+```bash
+python -m pytest backend/tests -q
+```
+
+La suite e2e abre una terminal, escribe en el PTY real y comprueba que el
+historial sigue ahí tras recargar la ventana. Desactiva WebGL a propósito para
+poder leer el contenido del terminal desde el DOM, lo que de paso ejercita el
+renderizador de respaldo.
+
+El workflow de CI incluye un job manual (`workflow_dispatch`) que construye el
+backend con PyInstaller y comprueba que el ejecutable responde a `/api/health`:
+los fallos de imports ocultos y DLLs solo aparecen en el binario empaquetado.
 
 ## Empaquetar como aplicación de escritorio
 
@@ -279,6 +386,28 @@ Authenticode. Usa `-AllowUnsigned`, publícalo de forma visible en las notas y
 acompaña cada archivo con su SHA-256. Si en el futuro se configura
 `CSC_LINK`/`CSC_KEY_PASSWORD`, el mismo pipeline validará la firma.
 
+### Metadatos de la release
+
+```powershell
+.\scripts\publish-release-metadata.ps1 -Version 0.2.0
+```
+
+Genera en `release-metadata/`:
+
+- `SHA256SUMS.txt` para pegar en las notas de la release (es lo único que un
+  usuario puede verificar de un binario sin firmar).
+- Manifiestos de **winget** listos para enviar a `microsoft/winget-pkgs`.
+- Manifiesto de **Scoop**.
+
+No sube nada: se revisa y se envía a mano.
+
+### Auto-update
+
+La app comprueba las releases de GitHub al arrancar, avisa si hay una versión
+nueva y **solo descarga si aceptas**; la instalación ocurre al salir. Como los
+binarios no están firmados, la descarga automática silenciosa no sería
+apropiada. Desactívalo con `VIBE_SPAM_DISABLE_UPDATES=1`.
+
 Los artefactos CPU y CUDA salen separados en `frontend/release/CPU/` y
 `frontend/release/CUDA/`, con el perfil incluido en el nombre del archivo.
 Antes de una release estable completa [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
@@ -349,7 +478,17 @@ la red privada de Compose.
 
 ## Configuración
 
-Edita `.env` o las variables de entorno:
+Los ajustes de voz (proveedor STT, cleaner, modelo, idioma, dispositivo, tipo de
+cómputo, beam y precarga) se editan en **Settings → providers** y se guardan por
+usuario en `%APPDATA%\vibe-spam\config.json` (o `~/.config/vibe-spam/`). Eso es
+lo que hace configurable el ejecutable empaquetado, donde un `.env` relativo al
+directorio de trabajo no tiene un sitio razonable.
+
+En la misma carpeta viven `cli-profiles.json` (ejecutables personalizados) y
+`session.json` (terminales de la última sesión).
+
+`.env` y las variables de entorno siguen siendo los valores por defecto —y el
+único sitio para las API keys:
 
 | Variable | Descripción |
 |----------|-------------|
@@ -375,7 +514,9 @@ Edita `.env` o las variables de entorno:
   solo selecciona CUDA cuando puede cargar el runtime completo; `cpu` nunca se
   sobreescribe. Si un `.env` antiguo fuerza `cuda` sobre un portable CPU, la app
   registra el diagnóstico y degrada automáticamente a `cpu/int8`.
-- **Puerto 5174 en lugar de 5173**: Vite intenta el 5173; si está ocupado usa el siguiente disponible (5174, 5175…). Mira siempre la URL que imprime Vite en consola. Si usas Electron en desarrollo, `electron/main.ts` apunta a `http://localhost:5173`; si Vite usa otro puerto, cambia temporalmente la URL en `frontend/electron/main.ts` o libera el 5173.
+- **Puerto 5173 estricto**: Vite ya no se mueve a 5174 si el puerto está
+  ocupado; falla con un error claro. Libera el 5173 (o cambia `server.port` en
+  `frontend/vite.config.ts` junto con la URL de `frontend/electron/main.ts`).
 - **ffmpeg**: `pydub` lo usa para normalizar audio. En Windows debe estar en el PATH. Si no lo tienes, instálalo con `winget install Gyan.FFmpeg` o añade el binario a este repo.
 - **Permisos de micrófono**: el navegador/Electron pedirán permiso la primera vez.
 - Consulta la lista completa de [limitaciones conocidas](docs/KNOWN_LIMITATIONS.md),
@@ -391,8 +532,19 @@ orígenes Vite locales.
 - `POST /api/agents` — crea un agente dinámicamente
 - `DELETE /api/agents/{id}` — cierra y borra un agente
 - `POST /api/agents/{id}/send` — envía texto limpio al CLI
+- `GET /api/git/worktrees` — inventario completo de worktrees por repositorio
+- `GET /api/git/worktrees/{id}/changes` — archivos modificados de un checkout
+- `GET /api/git/worktrees/{id}/commits` — historial de un checkout
+- `GET /api/git/overlaps` — archivos que tocan varios agentes a la vez
+- `GET /api/integration/preview` — simulación de merge sin tocar el disco
+- `POST /api/integration/integrate` — merge o cherry-pick transaccional
+- `POST /api/integration/pull-request` — push + `gh pr create`
+- `GET|POST /api/integration/snapshots` — puntos de restauración por checkout
+- `GET /api/session` · `POST /api/session/restore` · `DELETE /api/session`
+- `GET|PUT /api/settings/runtime` — ajustes de voz persistentes por usuario
 - `WS /ws/audio` — recibe audio, devuelve transcripción
-- `WS /ws/terminal/{id}` — puente PTY con la terminal
+- `WS /ws/terminal/{id}` — puente PTY con la terminal (reenvía el scrollback al
+  conectar)
 
 ## Roadmap
 

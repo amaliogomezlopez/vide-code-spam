@@ -31,6 +31,9 @@ class FakeSession:
     def resize(self, cols: int, rows: int) -> None:
         return None
 
+    def pid(self) -> int | None:
+        return None
+
 
 def test_dead_process_status_is_refreshed(monkeypatch) -> None:
     session = FakeSession()
@@ -105,6 +108,28 @@ def test_stop_all_disposes_every_process(monkeypatch) -> None:
 
     assert manager.list_agents() == []
     assert all(session.closed for session in sessions)
+
+
+def test_process_cwd_can_differ_from_display_context(monkeypatch) -> None:
+    captured: list[str | None] = []
+
+    def spawn(*args, **kwargs):
+        captured.append(kwargs.get("cwd"))
+        return FakeSession()
+
+    monkeypatch.setattr(agent_manager, "spawn_pty", spawn)
+    manager = AgentManager()
+    created = manager.create_agent(
+        "wsl",
+        "WSL",
+        "wsl.exe",
+        cwd="D:/repos/api",
+        process_cwd="",
+        autostart=True,
+    )
+
+    assert created.cwd == "D:/repos/api"
+    assert captured == [None]
 
 
 def test_remove_during_start_closes_late_session(monkeypatch) -> None:

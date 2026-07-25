@@ -14,7 +14,7 @@ from typing import Any, cast
 
 from faster_whisper import WhisperModel
 
-from backend.app.config import get_settings
+from backend.app.core.user_config import get_runtime_config
 from backend.app.services.stt.base import STTEngine
 
 logger = logging.getLogger(__name__)
@@ -22,12 +22,15 @@ logger = logging.getLogger(__name__)
 
 class FasterWhisperEngine(STTEngine):
     def __init__(self) -> None:
-        settings = get_settings()
-        self._model_size = settings.whisper_model_size
-        device = settings.whisper_device
-        compute_type = settings.whisper_compute_type
-        self._beam_size = settings.whisper_beam_size
-        self._language = None if settings.whisper_language == "auto" else settings.whisper_language
+        # Runtime config merges the .env defaults with the values the user edited
+        # in Settings, so a packaged build no longer depends on a .env file next
+        # to the executable.
+        config = get_runtime_config()
+        self._model_size = config.whisper_model_size
+        device = config.whisper_device
+        compute_type = config.whisper_compute_type
+        self._beam_size = config.whisper_beam_size
+        self._language = None if config.whisper_language == "auto" else config.whisper_language
         self._model: WhisperModel | None = None
         self._model_lock = threading.RLock()
         self._state = "not_loaded"
@@ -35,7 +38,7 @@ class FasterWhisperEngine(STTEngine):
         self._warmup_seconds = 0.0
         self._preload_scheduled = False
 
-        device_was_explicit = "whisper_device" in settings.model_fields_set
+        device_was_explicit = config.device_explicit
         if not device_was_explicit and device == "cpu" and self._is_cuda_build():
             device = "auto"
             compute_type = "auto"

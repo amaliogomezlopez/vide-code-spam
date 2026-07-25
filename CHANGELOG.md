@@ -7,6 +7,228 @@ y este proyecto intenta seguir [Versionado Semántico](https://semver.org/lang/e
 
 ## [Sin publicar]
 
+### Añadido — 2026-07-25 — Integración de ramas, avisos y distribución
+
+- **Merge preview** (`GET /api/integration/preview`): `git merge-tree
+  --write-tree` resuelve el merge en la base de datos de objetos, sin tocar
+  ningún working tree, y devuelve los archivos que entrarían en conflicto. Es la
+  continuación natural del radar: ya no solo ves la colisión, sabes si el merge
+  saldría limpio.
+- **Integración transaccional** (`POST /api/integration/integrate`): merge o
+  cherry-pick sobre el checkout principal, que debe estar limpio; cualquier
+  fallo se revierte con el `--abort` correspondiente. `POST
+  /api/integration/pull-request` empuja la rama y abre el PR con `gh`, con un
+  error explícito cuando la CLI no está instalada.
+- **Puntos de restauración** (`/api/integration/snapshots`): `git stash create`
+  más una etiqueta `vibe-safety/<rama>/<ts>` capturan el estado sin tocar el
+  working tree, de modo que un `git reset --hard` de un agente deja de ser
+  irreversible. Con listado, restauración y borrado desde el sidebar.
+- **Pestaña Integrate** en el sidebar, que reúne preview, acciones y puntos de
+  restauración del checkout seleccionado.
+- **Notificación de escritorio** cuando una terminal lleva rato esperando y la
+  ventana no tiene el foco, una vez por episodio y desactivable en Settings.
+- **Búsqueda en la terminal** con `Ctrl+F` por terminal (addon de xterm).
+- **Puertos por worker**: cada worker recibe `PORT`/`VITE_PORT` propios para que
+  varios `npm run dev` en paralelo no peleen por el 3000.
+- **Deriva de directorio**: en Linux se lee el cwd real del proceso vía `/proc`
+  y la tarjeta avisa cuando el agente se ha movido, en vez de seguir mostrando
+  una rama que ya no corresponde. En Windows se conserva el directorio de
+  arranque y se indica como tal.
+- **Scrollback configurable** (20k–2M caracteres por terminal) desde Settings.
+- **Auto-update** con `electron-updater` contra las releases de GitHub: avisa,
+  pregunta y descarga solo si el usuario acepta; instala al salir. Se puede
+  desactivar con `VIBE_SPAM_DISABLE_UPDATES=1`.
+- **`scripts/publish-release-metadata.ps1`**: genera `SHA256SUMS.txt` y los
+  manifiestos de winget y Scoop a partir de los artefactos construidos, con las
+  URLs correctamente codificadas.
+- **Verificación**: tests de componentes con Testing Library, suite Playwright
+  que abre una terminal real y comprueba el replay del scrollback tras recargar,
+  y job manual de CI que construye el backend empaquetado y valida su `/health`.
+
+### Arreglado — 2026-07-25 — Recarga del backend en desarrollo
+
+- `npm run dev:backend` limita `--reload` a `backend/app`. Antes uvicorn
+  vigilaba todo el repositorio: cualquier escritura del frontend (incluidos los
+  artefactos de Playwright) reiniciaba el backend, mataba las terminales y
+  recargaba el modelo de voz. La suite e2e pasó de 3,2 minutos a 13 segundos.
+
+### Añadido — 2026-07-25 — Supervisión y seguridad multiagente
+
+- **Radar de conflictos** (`GET /api/git/overlaps`): compara los worktrees
+  abiertos de un mismo repositorio calculando los archivos tocados por cada uno
+  (working tree + diff contra el `merge-base` con el checkout principal) y lista
+  los que reclaman dos o más agentes. También señala los checkouts con varias
+  terminales, el caso que Git no puede arbitrar.
+- **Inventario de worktrees** (`GET /api/git/worktrees`): lista todos los
+  worktrees de cada repositorio abierto vía `git worktree list --porcelain`,
+  incluidos los que ya no tienen terminal, con eliminación desde el sidebar.
+  Antes esos worktrees quedaban invisibles y se acumulaban en disco.
+- **Archivos modificados por checkout** (`GET /api/git/worktrees/{id}/changes`)
+  en una pestaña nueva del sidebar.
+- **Sesión persistente** (`/api/session`): el layout de terminales se guarda en
+  la carpeta del usuario y se ofrece restaurarlo al arrancar. El snapshot se
+  congela durante el apagado para que cerrar la app no lo borre.
+- **Ajustes de voz persistentes** (`/api/settings/runtime`): proveedor STT,
+  cleaner, modelo, idioma, dispositivo, tipo de cómputo, beam y precarga se
+  editan desde Settings y se guardan en `config.json` del usuario, en vez de
+  depender de un `.env` relativo al directorio de trabajo del ejecutable.
+- **Indicador de atención**: cada terminal marca *waiting* cuando lleva en
+  silencio tras haber producido salida y nadie la ha mirado desde entonces, con
+  contador y salto rápido en la barra superior.
+- **Avisos de escritura compartida** en el modal de apertura, sobre la rejilla y
+  en el sidebar cuando dos terminales comparten working tree.
+- **Bootstrap de worktree**: opción para copiar los `.env` locales (solo
+  archivos regulares de menos de 1 MiB) al crear un worktree.
+
+### Arreglado — 2026-07-25 — Historial, concurrencia Git y arranque
+
+- El scrollback ya no se pierde al filtrar por repositorio. Causa raíz: las
+  terminales filtradas se desmontaban y `xterm.dispose()` tiraba su buffer. Ahora
+  permanecen montadas y ocultas, y además el backend guarda el scrollback de
+  cada proceso y lo reenvía al conectar.
+- Cada PTY tiene su propio hilo lector con buffer circular y suscriptores. Antes
+  cada WebSocket bloqueaba un hilo del pool de asyncio en un bucle de lectura,
+  compitiendo con los endpoints HTTP y las llamadas a Git; la salida además se
+  perdía cuando no había terminal conectada. La salida se agrupa por frame.
+- Las llamadas a Git se serializan por checkout y se reintentan ante
+  `index.lock`, el error habitual cuando varios agentes usan Git a la vez sobre
+  el mismo repositorio.
+- El TTL de la caché de estado Git sube a 5 s: con 2 s el sondeo de agentes cada
+  3 s fallaba casi siempre, lanzando tres procesos `git` por carpeta y sondeo.
+- Electron en desarrollo usa el intérprete de `backend/.venv` cuando existe, en
+  vez del `python` del PATH.
+- Vite usa `strictPort`: moverse en silencio al 5174 dejaba en blanco la ventana
+  de Electron, que apunta a 5173.
+- Nuevo `npm run dev:all` (backend + Vite en un comando), renderizador WebGL en
+  xterm con degradación automática, menú de bandeja en inglés como el resto de
+  la interfaz y `npm audit` informativo en CI.
+
+### Arreglado — 2026-07-22 14:06 — Robustez de la navegación Git
+
+- Eliminado el bucle de conexión y desconexión de terminales. Causa raíz: una
+  conexión WebSocket podía terminar de crearse después de desmontar su efecto,
+  reclamar el PTY y dejar a la instancia visible reintentando con cierre 4409.
+  La conexión tardía se cancela y cada callback queda ligado a su propio socket.
+- La grilla calcula ahora las columnas desde un ancho mínimo real y las
+  cabeceras redistribuyen sus acciones cuando falta espacio. Las ramas, rutas y
+  nombres largos se truncan sin ocultar controles; la barra superior conserva
+  todas las acciones en el ancho mínimo de Electron.
+- Corregida la navegación accesible: las pestañas usan foco itinerante y
+  flechas, las filas Git son disclosures semánticos con una sola parada de
+  tabulación, existe un salto directo a la terminal seleccionada y el drawer
+  compacto bloquea el fondo, cierra con Escape y devuelve el foco.
+- La eliminación de un worktree es transaccional para todas las terminales que
+  comparten el checkout. Primero valida que esté limpio, restaura los procesos
+  que estaban activos si Git falla y solo elimina sus registros después de
+  completar la operación. Causa raíz: el cliente borraba un agente antes de
+  comprobar si Git aceptaba la eliminación.
+- Los resize de xterm y de la barra lateral se agrupan por frame, se deduplican
+  por filas/columnas y la preferencia solo se persiste al terminar el arrastre.
+  Los fallos operativos de Git conservan el último contexto conocido y ya no se
+  confunden con carpetas sin repositorio; el contador de cambios tampoco duplica
+  archivos parcialmente preparados.
+- Corregido el contrato tipado del historial de commits que hacía fallar Mypy
+  estricto. Actualizado además el bloqueo transitivo de `fast-uri` de 3.1.3 a
+  3.1.4, que corrige el aviso alto de confusión de host y devuelve
+  `npm audit` a cero vulnerabilidades. Verificado con 49/49 pruebas backend,
+  17/17 frontend, Mypy, Ruff,
+  ESLint, TypeScript/Vite, Electron y una prueba real con dos repositorios, tres
+  checkouts y cinco terminales en 1280×720 y 720×480. También se comprobó que un
+  worktree sucio conserva sus terminales y que uno limpio elimina dos terminales
+  compartidas sin dejar registros huérfanos. Regenerado el portable CPU y
+  verificado su backend empaquetado con `/api/health: ok` y un PTY `cmd.exe` en
+  estado `running`.
+
+### Añadido — 2026-07-22 13:22 — Navegación Git multirrepositorio
+
+- Añadida una vista lateral compacta, colapsable y redimensionable que agrupa
+  cada terminal como `repositorio → worktree → rama → terminal`. Incluye vistas
+  de repositorios y commits, estado limpio/modificado, contadores Git y un
+  filtro inmediato de la grilla sin convertir la aplicación en un IDE.
+- El contexto Git seleccionado y el destino de voz son independientes: filtrar
+  un repositorio, worktree o rama nunca cambia silenciosamente el `TARGET`, y
+  la interfaz avisa cuando ese destino queda fuera de la vista actual.
+- Incorporada una API Git de solo lectura con estado porcelain v2, identidad
+  estable para repositorios y worktrees enlazados e historial compacto de
+  commits limitado a las terminales abiertas. La vista se adapta como panel
+  superpuesto en ventanas estrechas y respeta navegación por teclado y
+  reducción de movimiento.
+- Verificado con 44/44 pruebas backend, 15/15 pruebas frontend, `compileall`,
+  TypeScript/Vite, compilación Electron, ESLint, revisión visual en tamaños de
+  escritorio y compactos, build PyInstaller/Electron y smoke test del backend
+  empaquetado (`/api/health`: `ok`).
+
+### Arreglado — 2026-07-22 13:22 — Contexto WSL y estabilidad del TARGET
+
+- Las terminales WSL conservan ahora la ruta Windows real como contexto Git y
+  usan por separado el directorio de proceso requerido para arrancar WSL.
+  Causa raíz: una única propiedad `cwd` representaba dos rutas con finalidades
+  distintas, por lo que la información Git podía desaparecer. Verificado con
+  pruebas de workspace y de `AgentManager`.
+- Mostrar de nuevo terminales filtradas ya no cambia el `TARGET`. Causa raíz:
+  cada xterm recién montado solicitaba foco y disparaba la selección del agente;
+  ahora solo se enfoca al montar si ya era el destino seleccionado. Verificado
+  mediante la prueba visual del filtro con el destino fuera de la vista.
+
+### Arreglado — 2026-07-22 13:22 — Invocación fiable de PyInstaller
+
+- El build del backend ejecuta PyInstaller como módulo del intérprete del
+  virtualenv. Causa raíz: el launcher `pyinstaller.exe` conservaba la ruta de
+  una instalación base de Python ya eliminada aunque los paquetes del entorno
+  seguían disponibles. Verificado regenerando el backend y el portable CPU y
+  arrancando el binario empaquetado en un puerto aislado.
+
+### Añadido — 2026-07-22 11:12 — Contexto de producto para navegación Git
+
+- Añadido `PRODUCT.md` con el registro de producto, usuarios, propósito,
+  personalidad, anti-referencias, principios de diseño y objetivo de
+  accesibilidad WCAG 2.2 AA. Motivo: fijar una base verificable para diseñar la
+  futura vista lateral de repositorios, worktrees, ramas y terminales sin
+  convertir Vibe Spam en un IDE completo.
+- Se establece que la navegación Git debe agrupar el estado compartido, filtrar
+  inmediatamente la grilla y mantener separadas la selección de contexto Git y
+  el destino de voz. Las operaciones Git de escritura quedan deliberadamente
+  para una segunda fase con controles de seguridad explícitos.
+
+### Añadido — 2026-07-19 10:56 — Distribución de proyectos por terminal
+
+- El flujo **Terminal** permite elegir explícitamente entre abrir todas las
+  terminales en un checkout compartido o asignar una carpeta/repositorio local
+  diferente a cada una. Las rutas se numeran, se conservan al cambiar la
+  cantidad de terminales y el modo independiente exige completar cada destino
+  antes de lanzar el conjunto.
+- Se reutiliza el endpoint transaccional de workspaces: si falla cualquier PTY,
+  el backend revierte las terminales creadas, y las peticiones `POST` no se
+  reintentan automáticamente. El modo **Parallel workspace** conserva su papel
+  para ramas y worktrees aislados dentro de un mismo repositorio.
+- Verificado con cuatro pruebas unitarias del constructor de payloads, una
+  prueba backend que confirma los `cwd` independientes, 11/11 pruebas frontend,
+  37/37 pruebas backend, build React/Vite, compilación Electron, ESLint y
+  `compileall`.
+
+### Arreglado — 2026-07-19 10:56 — Contraste del modal de workspaces
+
+- Definidos los alias semánticos de superficies, texto y estados que ya usaban
+  el modal de workspaces y el gestor de CLIs. Causa raíz: varias variables CSS
+  (`--surface-2`, `--text-secondary`, `--success`, entre otras) no existían y el
+  navegador descartaba silenciosamente esas declaraciones. Ahora enlazan con
+  los tokens oficiales del tema ámbar.
+
+### Arreglado — 2026-07-19 00:00 — Dictado flotante dentro de terminales
+
+- El botón flotante inserta ahora la transcripción directamente por el
+  WebSocket PTY de la terminal de Vibe Spam que tenía el foco, tanto para Codex
+  como para Kimi y los demás CLIs, mientras conserva el pegado global para
+  aplicaciones externas. El agente seleccionado queda fijado al comenzar a
+  grabar para que cambiar de panel durante la transcripción no redirija el
+  texto a otra de las terminales abiertas.
+- Causa raíz: xterm reenviaba el `Ctrl+V` sintético del inserter al proceso CLI
+  como carácter de control; Codex lo interpretaba como “pegar imagen” y mostraba
+  que no había una imagen válida en el portapapeles. Verificado con cuatro
+  pruebas de enrutado (terminal interna, botón flotante, aplicación externa y
+  ausencia de selección), build React/Vite, compilación Electron, ESLint y los
+  checks Python del backend.
+
 ### Añadido — 2026-07-18 — Dictado y empaquetado funcionales en macOS
 
 - El dictado global en macOS escribe la transcripción en el portapapeles y

@@ -25,6 +25,11 @@ Centralizar múltiples agentes de coding CLI en una interfaz única, permitiendo
   - `DELETE /api/agents/{id}` — borra agente
   - `POST /api/agents/{id}/send`
   - `POST /api/audio/provider/{provider}` y `/audio/cleaner/{provider}`
+  - `GET /api/git/worktrees` — inventario por repositorio
+  - `GET /api/git/worktrees/{id}/changes` y `/commits`
+  - `GET /api/git/overlaps` — archivos reclamados por varios agentes
+  - `GET /api/session`, `POST /api/session/restore`, `DELETE /api/session`
+  - `GET|PUT /api/settings/runtime` — ajustes de voz persistentes
 - **WebSocket `/ws/audio`**: recibe chunks de audio, devuelve transcripción cruda y limpia.
 - **WebSocket `/ws/terminal/{agent_id}`**: puente bidireccional PTY ↔ frontend.
 
@@ -35,6 +40,14 @@ Centralizar múltiples agentes de coding CLI en una interfaz única, permitiendo
   - Windows: `winpty.PtyProcess.spawn()`
   - Unix: `pexpect.spawn()`
 - Métodos: `create_agent`, `remove_agent`, `start_agent`, `stop_agent`, `send_to_agent`.
+- **Propiedad del PTY**: cada `AgentProcess` tiene un hilo lector propio que
+  drena la salida, la acumula en un buffer circular (`SCROLLBACK_CHARS`) y la
+  reparte a los suscriptores. Consecuencias: el proceso no se bloquea cuando no
+  hay terminal conectada, un cliente que reconecta recibe su historial con
+  `attach()` (snapshot y suscripción bajo el mismo lock, sin duplicar ni perder
+  fragmentos) y el pool de hilos de asyncio queda libre para los endpoints HTTP.
+- `on_change` notifica cada alta/baja para que `session_store` persista el
+  layout de terminales.
 
 ### 4. Audio Processor
 
@@ -103,6 +116,18 @@ instalación.
 
 `core/git_worktrees.py` encapsula todas las llamadas a Git sin shell, valida
 refs, obtiene estado con caché y rechaza la eliminación de worktrees sucios.
+Todas las invocaciones se serializan con un lock por checkout y se reintentan
+ante contención de `index.lock`/`packed-refs.lock`, porque varios agentes sobre
+un mismo repositorio la provocan de forma rutinaria. `touched_files` y
+`find_overlaps` calculan qué archivos reclama cada worktree y cuáles reclaman
+varios; `list_worktrees` expone el inventario real del repositorio.
+
+`core/user_paths.py` centraliza la carpeta de configuración por usuario, donde
+viven `cli-profiles.json` (ejecutables), `config.json` (ajustes de voz,
+`core/user_config.py`) y `session.json` (layout de terminales,
+`core/session_store.py`). El snapshot de sesión se lee al arrancar y se congela
+durante el apagado, para que cerrar la app —que cierra todos los agentes— no lo
+sobrescriba con una lista vacía.
 `POST /api/workspaces/launch` coordina worktrees y procesos como una sola
 transacción compensable: cualquier fallo elimina agentes y worktrees creados
 durante esa petición.

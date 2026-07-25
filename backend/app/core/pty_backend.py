@@ -68,6 +68,11 @@ class PtySession(ABC):
     @abstractmethod
     def resize(self, cols: int, rows: int) -> None: ...
 
+    def pid(self) -> int | None:
+        """Process id of the child, when the transport exposes one."""
+
+        return None
+
 
 def _decode(data: Any) -> str:
     if isinstance(data, bytes):
@@ -129,6 +134,10 @@ class WinPtySession(PtySession):
         except Exception as exc:
             logger.debug("winpty resize failed: %s", exc)
 
+    def pid(self) -> int | None:
+        value = getattr(self._process, "pid", None)
+        return int(value) if isinstance(value, int) else None
+
 
 class UnixPtySession(PtySession):
     def __init__(self, cmdline: str, process: Any) -> None:
@@ -167,6 +176,10 @@ class UnixPtySession(PtySession):
             self._process.setwinsize(rows, cols)
         except Exception as exc:
             logger.debug("pexpect resize failed: %s", exc)
+
+    def pid(self) -> int | None:
+        value = getattr(self._process, "pid", None)
+        return int(value) if isinstance(value, int) else None
 
 
 def spawn_pty(

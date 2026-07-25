@@ -11,6 +11,8 @@ export default tseslint.config(
       'inserter-dist/**',
       'vite.config.js',
       'vite.config.d.ts',
+      'playwright-report/**',
+      'test-results/**',
     ],
   },
   eslint.configs.recommended,
@@ -27,5 +29,10 @@ export default tseslint.config(
     files: ['electron/**/*.cjs'],
     languageOptions: { globals: { require: 'readonly' } },
     rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
+    // Developer tooling that runs on Node, not in the renderer.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: { console: 'readonly', process: 'readonly' } },
   }
 )

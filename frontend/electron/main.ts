@@ -7,11 +7,13 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   screen,
   systemPreferences,
   Tray,
 } from 'electron'
 import path from 'path'
+import electronUpdater from 'electron-updater'
 import { spawn, ChildProcess } from 'child_process'
 import { fileURLToPath } from 'url'
 import fs from 'fs'
@@ -52,6 +54,7 @@ interface AppSettings {
   fontSize: number
   fontFamily: string
   debugModeEnabled: boolean
+  attentionNotifications: boolean
 }
 
 interface OverlayPosition {
@@ -69,6 +72,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 12,
   fontFamily: 'monospace',
   debugModeEnabled: false,
+  attentionNotifications: true,
 }
 
 function settingsPath(): string {
@@ -92,6 +96,7 @@ function loadSettings(): AppSettings {
 
 let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
 let globalDictationMode: 'idle' | 'listening' | 'transcribing' | 'error' = 'idle'
+let globalDictationTarget: 'terminal' | 'external' = 'external'
 let globalDictationCaptureJson: string | null = null
 let globalDictationTargetLabel: string | null = null
 let globalDictationTargetBundleId: string | null = null
@@ -151,6 +156,10 @@ function normalizeSettings(value: unknown): AppSettings {
       typeof input.debugModeEnabled === 'boolean'
         ? input.debugModeEnabled
         : DEFAULT_SETTINGS.debugModeEnabled,
+    attentionNotifications:
+      typeof input.attentionNotifications === 'boolean'
+        ? input.attentionNotifications
+        : DEFAULT_SETTINGS.attentionNotifications,
   }
   if (normalized.globalDictationShortcut === GLOBAL_DICTATION_ACCELERATOR_LEGACY) {
     normalized.globalDictationShortcut = GLOBAL_DICTATION_ACCELERATOR_DEFAULT
@@ -345,6 +354,8 @@ function waitForBackend(retries = MAX_HEALTH_RETRIES): Promise<void> {
   })
 }
 
+// In development the repository virtualenv is the interpreter that actually has
+// the backend dependencies installed; a bare `python` from PATH usually does not.
 function developmentPythonPath(): string {
   const projectRoot = path.join(__dirname, '..', '..')
   const virtualenvPython =
@@ -703,7 +714,7 @@ function updateTrayMenu() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: isVisible ? 'Ocultar Vibe Spam' : 'Mostrar Vibe Spam',
+        label: isVisible ? 'Hide Vibe Spam' : 'Show Vibe Spam',
         click: () => {
           if (isVisible) hideMainWindow()
           else showMainWindow()
@@ -711,13 +722,13 @@ function updateTrayMenu() {
       },
       {
         label: currentSettings.globalDictationEnabled
-          ? 'Dictado global activo'
-          : 'Dictado global inactivo',
+          ? 'Global dictation: on'
+          : 'Global dictation: off',
         enabled: false,
       },
       { type: 'separator' },
       {
-        label: 'Salir completamente',
+        label: 'Quit completely',
         click: () => quitCompletely(),
       },
     ])
@@ -728,7 +739,7 @@ function createTray() {
   if (tray) return
   const icon = getAppIcon()
   tray = icon ? new Tray(icon) : new Tray(nativeImage.createEmpty())
-  tray.setToolTip(`${APP_NAME} - dictado y terminales`)
+  tray.setToolTip(`${APP_NAME} - terminals and dictation`)
   tray.on('click', () => showMainWindow())
   updateTrayMenu()
 }
@@ -1084,8 +1095,8 @@ function insertWithMacOSClipboard(): Promise<boolean> {
 
 function sendGlobalDictationCommand(command: 'start' | 'stop') {
   if (!currentSettings.globalDictationEnabled || !mainWindow || mainWindow.isDestroyed()) return
-  sendDictationDebug('electron', `send ${command}`)
-  mainWindow.webContents.send('global-dictation', command)
+  sendDictationDebug('electron', `send ${command} (${globalDictationTarget})`)
+  mainWindow.webContents.send('global-dictation', command, globalDictationTarget)
 }
 
 function requestGlobalDictationToggle() {
@@ -1099,6 +1110,11 @@ function requestGlobalDictationToggle() {
   }
   if (globalDictationMode === 'transcribing') return
 
+  // A focusable:false overlay leaves focus in the app underneath it. When that
+  // app is Vibe Spam, the selected xterm must receive text through its own PTY
+  // WebSocket: a synthetic Ctrl+V is forwarded to CLIs such as Codex as the
+  // "paste image" control character instead of pasting clipboard text.
+  globalDictationTarget = mainWindow?.isFocused() ? 'terminal' : 'external'
   // Capture the focused text control in the background (non-blocking) and start
   // recording as soon as we have the capture (or immediately if capture fails).
   // The control is re-located at insert time by its stable RuntimeId, so a
@@ -1106,6 +1122,16 @@ function requestGlobalDictationToggle() {
   // main thread.
   globalDictationMode = 'listening'
   updateDictationOverlay({ mode: 'listening', level: 0.18 })
+  // Checked before any platform-specific capture: when the focused app is Vibe
+  // Spam itself, no OS-level paste is involved on any platform.
+  if (globalDictationTarget === 'terminal') {
+    globalDictationCaptureJson = null
+    globalDictationTargetBundleId = null
+    globalDictationTargetLabel = 'Vibe Spam terminal'
+    sendDictationDebug('focus', 'selected Vibe Spam terminal')
+    sendGlobalDictationCommand('start')
+    return
+  }
   if (process.platform === 'darwin') {
     globalDictationCaptureJson = null
     captureMacOSFrontmostApplicationAsync((bundleId) => {
@@ -1207,6 +1233,43 @@ function createMainWindow() {
   })
 }
 
+// Update checks are opt-out and never block startup: a release feed that is
+// unreachable, rate-limited or simply absent must not keep the app from opening.
+// Downloads are explicit because the builds are unsigned — the user should
+// decide when to replace the executable.
+function checkForUpdates() {
+  if (!app.isPackaged || process.env.VIBE_SPAM_DISABLE_UPDATES === '1') return
+  const { autoUpdater } = electronUpdater
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.on('error', (error) => {
+    console.error('Update check failed:', error?.message ?? error)
+  })
+  autoUpdater.on('update-available', async (info) => {
+    const target = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+    const options = {
+      type: 'info' as const,
+      buttons: ['Download now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      title: `${APP_NAME} ${info.version} is available`,
+      message: `You are running ${app.getVersion()}. Download ${info.version}?`,
+      detail: 'The update installs when you quit Vibe Spam.',
+    }
+    const result = target
+      ? await dialog.showMessageBox(target, options)
+      : await dialog.showMessageBox(options)
+    if (result.response === 0) {
+      autoUpdater.downloadUpdate().catch((error: Error) => {
+        console.error('Update download failed:', error.message)
+      })
+    }
+  })
+  autoUpdater.checkForUpdates().catch((error: Error) => {
+    console.error('Update check failed:', error.message)
+  })
+}
+
 function registerGlobalShortcuts() {
   globalShortcut.unregisterAll()
   try {
@@ -1279,6 +1342,7 @@ if (gotTheLock) {
       createDictationOverlayWindow()
       setDictationOverlayVisible(currentSettings.globalDictationEnabled)
       registerGlobalShortcuts()
+      checkForUpdates()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.error('Failed to start backend:', err)
@@ -1453,6 +1517,24 @@ if (gotTheLock) {
       updateDictationOverlay(state)
     }
   )
+
+  // Notify only when the user cannot already see the app: an in-window badge is
+  // enough while Vibe Spam is focused, and a duplicate toast is just noise.
+  ipcMain.handle('notify-attention', (event, payload: { title: string; body: string }) => {
+    requireSender(event, mainWindow)
+    if (!currentSettings.attentionNotifications) return false
+    if (!Notification.isSupported()) return false
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) return false
+    const notification = new Notification({
+      title: String(payload?.title ?? APP_NAME).slice(0, 120),
+      body: String(payload?.body ?? '').slice(0, 240),
+      icon: getAppIcon(),
+      silent: false,
+    })
+    notification.on('click', () => showMainWindow())
+    notification.show()
+    return true
+  })
 
   ipcMain.handle('insert-global-dictation-text', async (_event, text: string) => {
     requireSender(_event, mainWindow)

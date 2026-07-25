@@ -49,6 +49,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     fallbackSettings.fontSize = settings.fontSize
     fallbackSettings.fontFamily = settings.fontFamily
     fallbackSettings.debugModeEnabled = settings.debugModeEnabled
+    fallbackSettings.attentionNotifications = settings.attentionNotifications
   },
 }))
 
