@@ -66,8 +66,13 @@ def restore_session() -> dict[str, Any]:
         if cli_id:
             try:
                 resolved = registry.resolve(cli_id)
-            except ValueError as exc:
-                skipped.append({"id": agent_id, "reason": str(exc)})
+            except ValueError:
+                # The CLI id is ours and safe to echo; the exception text is not.
+                logger.info("CLI %s is unavailable, skipping %s", cli_id, agent_id)
+                skipped.append({
+                    "id": agent_id,
+                    "reason": f"The {cli_id} CLI is no longer installed or detected.",
+                })
                 continue
             # Re-resolve native CLIs, whose executable may have moved between
             # runs. A WSL agent is launched through `wsl.exe` with the Linux path
